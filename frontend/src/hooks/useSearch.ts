@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Search } from '../../wailsjs/go/main/App';
-import type { SearchResultDTO } from '../../wailsjs/go/main/App';
+import { main } from '../../wailsjs/go/models';
 
-export type { SearchResultDTO };
+export type SearchResultDTO = main.SearchResultDTO;
 
 export function useSearch() {
   const [query, setQuery] = useState('');

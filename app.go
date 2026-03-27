@@ -188,6 +188,7 @@ func (a *App) ResumeIndexing() {
 // ReindexNow triggers a full re-index of all watched folders in the background.
 func (a *App) ReindexNow() {
 	go func() {
+		runtime.ResetSignalHandlers()
 		if a.store == nil || a.pipeline == nil {
 			return
 		}
@@ -213,6 +214,7 @@ func (a *App) AddFolder(path string) error {
 	}
 	// Trigger indexing for the newly added folder.
 	go func() {
+		runtime.ResetSignalHandlers()
 		if a.pipeline != nil {
 			patterns, _ := a.store.GetExcludedPatterns()
 			a.pipeline.IndexFolder(path, patterns)
@@ -260,6 +262,7 @@ func (a *App) GetPreviewClipPath(videoPath string, timestamp float64) (string, e
 
 // watchEvents processes file watcher events and triggers single-file indexing.
 func (a *App) watchEvents(events <-chan watcher.FileEvent) {
+	runtime.ResetSignalHandlers()
 	for ev := range events {
 		switch ev.Type {
 		case watcher.FileCreated, watcher.FileModified:
@@ -272,6 +275,7 @@ func (a *App) watchEvents(events <-chan watcher.FileEvent) {
 
 // startWatchingFolders adds all previously indexed folders to the file watcher.
 func (a *App) startWatchingFolders() {
+	runtime.ResetSignalHandlers()
 	if a.watcher == nil || a.store == nil {
 		return
 	}
@@ -283,6 +287,7 @@ func (a *App) startWatchingFolders() {
 
 // emitStatusLoop sends indexing status updates to the frontend every second.
 func (a *App) emitStatusLoop() {
+	runtime.ResetSignalHandlers()
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	for {

@@ -6,6 +6,8 @@
   "frontend:build": "npm run build",
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "./frontend",
+  "tags": "webkit2_41",
   "author": {
     "name": "amankumarsingh77",
     "email": "amankumarsingh7702@gmail.com"

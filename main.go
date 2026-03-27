@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -14,6 +15,14 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+func init() {
+	// Prevent WebKit2GTK DMABUF renderer crashes on NVIDIA GPUs (Ubuntu 24.04+).
+	// See: https://bugs.launchpad.net/ubuntu/+source/webkit2gtk/+bug/2062995
+	if os.Getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == "" {
+		os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+	}
+}
 
 func main() {
 	app := NewApp()

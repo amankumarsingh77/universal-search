@@ -36,6 +36,7 @@ Video pipeline follows sentrysearch patterns: 30s chunks with 5s overlap, 480p/5
 - Embedding spaces are **incompatible across models**. Never mix embeddings from different Gemini model versions.
 - Use `RETRIEVAL_DOCUMENT` task type for indexing, `RETRIEVAL_QUERY` for search queries.
 - FFmpeg is called as a subprocess, not via Go bindings.
+- **Do not add Claude as a co-author in commit messages.** No `Co-Authored-By` lines.
 
 ## Build & Run
 
@@ -44,10 +45,11 @@ Video pipeline follows sentrysearch patterns: 30s chunks with 5s overlap, 480p/5
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
 # Development mode (hot reload)
-wails dev
+# -tags webkit2_41 required on Linux with webkit2gtk-4.1 (Ubuntu 22.04+)
+wails dev -tags webkit2_41
 
 # Build production binary
-wails build
+wails build -tags webkit2_41
 
 # Run Go tests
 go test ./...

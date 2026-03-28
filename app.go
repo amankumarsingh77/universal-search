@@ -126,6 +126,17 @@ func (a *App) startup(ctx context.Context) {
 		log.Error("failed to start file watcher", "error", err)
 	}
 
+	// Listen for add-folder requests from the frontend.
+	runtime.EventsOn(ctx, "add-folder-request", func(optionalData ...interface{}) {
+		dir, err := runtime.OpenDirectoryDialog(ctx, runtime.OpenDialogOptions{
+			Title: "Select folder to index",
+		})
+		if err == nil && dir != "" {
+			a.AddFolder(dir)
+			runtime.EventsEmit(ctx, "folders-changed")
+		}
+	})
+
 	// Background goroutines.
 	go a.watchEvents(eventCh)
 	go a.startWatchingFolders()

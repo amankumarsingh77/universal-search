@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { GetFolders, AddFolder, RemoveFolder } from '../../wailsjs/go/main/App';
+import { GetFolders, RemoveFolder } from '../../wailsjs/go/main/App';
+import { EventsEmit, EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
 interface FolderManagerProps {
   onClose: () => void;
@@ -26,17 +27,17 @@ export function FolderManager({ onClose }: FolderManagerProps) {
     loadFolders();
   }, [loadFolders]);
 
-  const handleAddFolder = async () => {
-    try {
-      const { OpenDirectoryDialog } = await import('../../wailsjs/runtime/runtime');
-      const dir = await OpenDirectoryDialog({ Title: 'Select folder to index' });
-      if (dir) {
-        await AddFolder(dir);
-        await loadFolders();
-      }
-    } catch (err) {
-      console.error('Failed to add folder:', err);
-    }
+  useEffect(() => {
+    EventsOn('folders-changed', () => {
+      loadFolders();
+    });
+    return () => {
+      EventsOff('folders-changed');
+    };
+  }, [loadFolders]);
+
+  const handleAddFolder = () => {
+    EventsEmit('add-folder-request');
   };
 
   const handleRemove = async (path: string, deleteData: boolean) => {

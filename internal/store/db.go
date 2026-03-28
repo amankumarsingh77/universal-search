@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -11,7 +12,8 @@ import (
 
 // Store wraps a SQLite database for file and chunk metadata.
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *slog.Logger
 }
 
 // FileRecord represents a file tracked by the indexer.
@@ -87,7 +89,10 @@ CREATE TABLE IF NOT EXISTS excluded_patterns (
 
 // NewStore opens the SQLite database at dsn, enables WAL mode and foreign keys,
 // and runs schema migrations.
-func NewStore(dsn string) (*Store, error) {
+func NewStore(dsn string, logger *slog.Logger) (*Store, error) {
+	log := logger.WithGroup("store")
+	log.Info("opening database", "path", dsn)
+
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -111,11 +116,13 @@ func NewStore(dsn string) (*Store, error) {
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	log.Info("database ready")
+	return &Store{db: db, logger: log}, nil
 }
 
-// Close closes the underlying database connection.
+// Close checkpoints the WAL and closes the underlying database connection.
 func (s *Store) Close() error {
+	_, _ = s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
 	return s.db.Close()
 }
 
@@ -286,6 +293,55 @@ func (s *Store) AddExcludedPattern(pattern string) error {
 		return fmt.Errorf("add excluded pattern: %w", err)
 	}
 	return nil
+}
+
+// RemoveIndexedFolder removes a folder from the indexed folders list.
+// If deleteData is true, all files and chunks under that path prefix are also deleted,
+// and the associated vector IDs are returned for removal from the vector store.
+func (s *Store) RemoveIndexedFolder(path string, deleteData bool) ([]string, error) {
+	if deleteData {
+		rows, err := s.db.Query(`
+			SELECT c.vector_id FROM chunks c
+			JOIN files f ON f.id = c.file_id
+			WHERE f.path LIKE ? || '%'
+		`, path)
+		if err != nil {
+			return nil, fmt.Errorf("collect vector ids: %w", err)
+		}
+		defer rows.Close()
+
+		var vecIDs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("scan vector id: %w", err)
+			}
+			vecIDs = append(vecIDs, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate vector ids: %w", err)
+		}
+
+		_, err = s.db.Exec(`DELETE FROM files WHERE path LIKE ? || '%'`, path)
+		if err != nil {
+			return nil, fmt.Errorf("delete files for folder: %w", err)
+		}
+
+		_, err = s.db.Exec(`DELETE FROM indexed_folders WHERE path = ?`, path)
+		if err != nil {
+			return nil, fmt.Errorf("remove indexed folder: %w", err)
+		}
+
+		s.logger.Info("removed folder with data", "path", path, "vectorsRemoved", len(vecIDs))
+		return vecIDs, nil
+	}
+
+	_, err := s.db.Exec(`DELETE FROM indexed_folders WHERE path = ?`, path)
+	if err != nil {
+		return nil, fmt.Errorf("remove indexed folder: %w", err)
+	}
+	s.logger.Info("removed folder (data kept)", "path", path)
+	return nil, nil
 }
 
 // GetExcludedPatterns returns all excluded glob patterns.

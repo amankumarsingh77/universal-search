@@ -1,12 +1,16 @@
 package store
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 )
 
+var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
 func TestNewStore_CreatesTablesSuccessfully(t *testing.T) {
-	s, err := NewStore(":memory:")
+	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
 		t.Fatalf("NewStore failed: %v", err)
 	}
@@ -24,7 +28,7 @@ func TestNewStore_CreatesTablesSuccessfully(t *testing.T) {
 }
 
 func TestUpsertFile_And_GetByPath(t *testing.T) {
-	s, err := NewStore(":memory:")
+	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +62,7 @@ func TestUpsertFile_And_GetByPath(t *testing.T) {
 }
 
 func TestInsertChunk_And_GetByVectorIDs(t *testing.T) {
-	s, err := NewStore(":memory:")
+	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +96,7 @@ func TestInsertChunk_And_GetByVectorIDs(t *testing.T) {
 }
 
 func TestDeleteChunksByFileID(t *testing.T) {
-	s, err := NewStore(":memory:")
+	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +122,7 @@ func TestDeleteChunksByFileID(t *testing.T) {
 }
 
 func TestGetVectorIDsByFileID(t *testing.T) {
-	s, err := NewStore(":memory:")
+	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +146,7 @@ func TestGetVectorIDsByFileID(t *testing.T) {
 }
 
 func TestAddAndGetIndexedFolders(t *testing.T) {
-	s, err := NewStore(":memory:")
+	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +167,7 @@ func TestAddAndGetIndexedFolders(t *testing.T) {
 }
 
 func TestAddAndGetExcludedPatterns(t *testing.T) {
-	s, err := NewStore(":memory:")
+	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,8 +187,94 @@ func TestAddAndGetExcludedPatterns(t *testing.T) {
 	}
 }
 
+func TestRemoveIndexedFolder(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.AddIndexedFolder("/home/user/docs")
+	if err != nil {
+		t.Fatalf("AddIndexedFolder failed: %v", err)
+	}
+
+	vecIDs, err := s.RemoveIndexedFolder("/home/user/docs", false)
+	if err != nil {
+		t.Fatalf("RemoveIndexedFolder failed: %v", err)
+	}
+	if vecIDs != nil {
+		t.Fatalf("expected nil vector IDs when deleteData=false, got %v", vecIDs)
+	}
+
+	folders, err := s.GetIndexedFolders()
+	if err != nil {
+		t.Fatalf("GetIndexedFolders failed: %v", err)
+	}
+	if len(folders) != 0 {
+		t.Fatalf("expected folder to be removed, got %v", folders)
+	}
+}
+
+func TestRemoveIndexedFolder_WithData(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.AddIndexedFolder("/home/user/docs")
+	if err != nil {
+		t.Fatalf("AddIndexedFolder failed: %v", err)
+	}
+
+	fileID, err := s.UpsertFile(FileRecord{
+		Path: "/home/user/docs/report.pdf", FileType: "text", Extension: ".pdf",
+		SizeBytes: 2048, ModifiedAt: time.Now(), IndexedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile failed: %v", err)
+	}
+
+	_, err = s.InsertChunk(ChunkRecord{FileID: fileID, VectorID: "vec-folder-001", ChunkIndex: 0})
+	if err != nil {
+		t.Fatalf("InsertChunk failed: %v", err)
+	}
+	_, err = s.InsertChunk(ChunkRecord{FileID: fileID, VectorID: "vec-folder-002", ChunkIndex: 1})
+	if err != nil {
+		t.Fatalf("InsertChunk failed: %v", err)
+	}
+
+	vecIDs, err := s.RemoveIndexedFolder("/home/user/docs", true)
+	if err != nil {
+		t.Fatalf("RemoveIndexedFolder failed: %v", err)
+	}
+	if len(vecIDs) != 2 {
+		t.Fatalf("expected 2 vector IDs, got %d: %v", len(vecIDs), vecIDs)
+	}
+	if vecIDs[0] != "vec-folder-001" && vecIDs[1] != "vec-folder-001" {
+		t.Fatalf("expected vec-folder-001 in returned IDs, got %v", vecIDs)
+	}
+	if vecIDs[0] != "vec-folder-002" && vecIDs[1] != "vec-folder-002" {
+		t.Fatalf("expected vec-folder-002 in returned IDs, got %v", vecIDs)
+	}
+
+	_, err = s.GetFileByPath("/home/user/docs/report.pdf")
+	if err == nil {
+		t.Fatal("expected file to be deleted, but GetFileByPath succeeded")
+	}
+
+	folders, err := s.GetIndexedFolders()
+	if err != nil {
+		t.Fatalf("GetIndexedFolders failed: %v", err)
+	}
+	if len(folders) != 0 {
+		t.Fatalf("expected folder to be removed, got %v", folders)
+	}
+}
+
 func TestUpsertFile_UpdatesExisting(t *testing.T) {
-	s, err := NewStore(":memory:")
+	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
 		t.Fatal(err)
 	}

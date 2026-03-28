@@ -278,6 +278,36 @@ func (a *App) AddFolder(path string) error {
 	return nil
 }
 
+// RemoveFolder removes a folder from the indexed folders list and stops watching it.
+// If deleteData is true, it also removes all indexed file data and vectors.
+func (a *App) RemoveFolder(path string, deleteData bool) error {
+	if a.store == nil {
+		return fmt.Errorf("store not initialized")
+	}
+	a.logger.Info("removing folder", "path", path, "deleteData", deleteData)
+
+	vecIDs, err := a.store.RemoveIndexedFolder(path, deleteData)
+	if err != nil {
+		return err
+	}
+
+	// Stop watching the folder.
+	if a.watcher != nil {
+		a.watcher.Remove(path)
+	}
+
+	// Remove vectors from the HNSW index.
+	if deleteData && a.index != nil {
+		for _, vid := range vecIDs {
+			a.index.Delete(vid)
+		}
+		a.saveIndex()
+		a.logger.Info("removed vectors from index", "count", len(vecIDs))
+	}
+
+	return nil
+}
+
 // GetFolders returns all indexed folder paths.
 func (a *App) GetFolders() ([]string, error) {
 	if a.store == nil {

@@ -1,0 +1,49 @@
+run:
+  timeout: 5m
+  go: "1.24"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - gocritic
+    - gosec
+    - misspell
+    - revive
+    - prealloc
+    - unconvert
+    - gofmt
+
+linters-settings:
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - hugeParam
+  gosec:
+    excludes:
+      - G204 # subprocess calls — we use ffmpeg intentionally
+      - G304 # file path from variable — needed for file indexing
+  revive:
+    rules:
+      - name: exported
+        disabled: true
+
+issues:
+  exclude-dirs:
+    - frontend
+    - build
+  exclude-files:
+    - ".*_test\\.go$"
+  max-issues-per-linter: 50
+  max-same-issues: 5

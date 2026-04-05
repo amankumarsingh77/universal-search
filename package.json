@@ -1,0 +1,19 @@
+{
+  "name": "universal-search",
+  "private": true,
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0"
+  },
+  "lint-staged": {
+    "*.go": [
+      "golangci-lint run --fix"
+    ],
+    "frontend/src/**/*.{ts,tsx}": [
+      "bash -c 'cd frontend && npx eslint --fix \"$@\"' --"
+    ]
+  }
+}

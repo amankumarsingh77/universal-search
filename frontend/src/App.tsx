@@ -24,7 +24,7 @@ function App() {
   const [showFolderManager, setShowFolderManager] = useState(false);
 
   useEffect(() => {
-    const cancel = EventsOn('open-folder-manager', () => {
+    const _cancel = EventsOn('open-folder-manager', () => {
       setShowFolderManager(true);
     });
     return () => {

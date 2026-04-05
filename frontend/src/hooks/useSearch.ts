@@ -11,6 +11,7 @@ export function useSearch() {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchSeqRef = useRef(0);
 
   const performSearch = useCallback(async (q: string) => {
     if (!q.trim()) {
@@ -23,15 +24,22 @@ export function useSearch() {
     setIsSearching(true);
     setError(null);
 
+    const seq = ++searchSeqRef.current;
+
     try {
       const res = await Search(q);
+      // Discard stale results if a newer search was triggered.
+      if (seq !== searchSeqRef.current) return;
       setResults(res || []);
       setSelectedIndex(0);
     } catch (err) {
+      if (seq !== searchSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
       setResults([]);
     } finally {
-      setIsSearching(false);
+      if (seq === searchSeqRef.current) {
+        setIsSearching(false);
+      }
     }
   }, []);
 

@@ -1,4 +1,5 @@
 import type { SearchResultDTO } from '../hooks/useSearch';
+import { formatSize } from '../utils/format';
 import { VideoPreview } from './previews/VideoPreview';
 import { ImagePreview } from './previews/ImagePreview';
 import { TextPreview } from './previews/TextPreview';
@@ -6,13 +7,6 @@ import { AudioPreview } from './previews/AudioPreview';
 
 interface PreviewPanelProps {
   result: SearchResultDTO | null;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function getDirectoryPath(filePath: string): string {

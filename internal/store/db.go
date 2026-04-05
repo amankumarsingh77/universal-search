@@ -258,6 +258,51 @@ func (s *Store) GetVectorIDsByFileID(fileID int64) ([]string, error) {
 	return ids, rows.Err()
 }
 
+// RemoveFileByPath deletes a file and its chunks by path, returning the
+// associated vector IDs for removal from the vector store.
+func (s *Store) RemoveFileByPath(path string) ([]string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var fileID int64
+	err = tx.QueryRow(`SELECT id FROM files WHERE path = ?`, path).Scan(&fileID)
+	if err != nil {
+		return nil, fmt.Errorf("find file: %w", err)
+	}
+
+	rows, err := tx.Query(`SELECT vector_id FROM chunks WHERE file_id = ?`, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("collect vector ids: %w", err)
+	}
+	var vecIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan vector id: %w", err)
+		}
+		vecIDs = append(vecIDs, id)
+	}
+	rows.Close()
+
+	if _, err := tx.Exec(`DELETE FROM chunks WHERE file_id = ?`, fileID); err != nil {
+		return nil, fmt.Errorf("delete chunks: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM files WHERE id = ?`, fileID); err != nil {
+		return nil, fmt.Errorf("delete file: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit tx: %w", err)
+	}
+
+	s.logger.Info("removed file", "path", path, "vectors", len(vecIDs))
+	return vecIDs, nil
+}
+
 // AddIndexedFolder adds a folder path to the indexed folders list.
 func (s *Store) AddIndexedFolder(path string) error {
 	_, err := s.db.Exec(`INSERT OR IGNORE INTO indexed_folders (path) VALUES (?)`, path)
@@ -299,8 +344,14 @@ func (s *Store) AddExcludedPattern(pattern string) error {
 // If deleteData is true, all files and chunks under that path prefix are also deleted,
 // and the associated vector IDs are returned for removal from the vector store.
 func (s *Store) RemoveIndexedFolder(path string, deleteData bool) ([]string, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	if deleteData {
-		rows, err := s.db.Query(`
+		rows, err := tx.Query(`
 			SELECT c.vector_id FROM chunks c
 			JOIN files f ON f.id = c.file_id
 			WHERE f.path LIKE ? || '%'
@@ -308,38 +359,45 @@ func (s *Store) RemoveIndexedFolder(path string, deleteData bool) ([]string, err
 		if err != nil {
 			return nil, fmt.Errorf("collect vector ids: %w", err)
 		}
-		defer rows.Close()
 
 		var vecIDs []string
 		for rows.Next() {
 			var id string
 			if err := rows.Scan(&id); err != nil {
+				rows.Close()
 				return nil, fmt.Errorf("scan vector id: %w", err)
 			}
 			vecIDs = append(vecIDs, id)
 		}
+		rows.Close()
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("iterate vector ids: %w", err)
 		}
 
-		_, err = s.db.Exec(`DELETE FROM files WHERE path LIKE ? || '%'`, path)
-		if err != nil {
+		if _, err := tx.Exec(`DELETE FROM files WHERE path LIKE ? || '%'`, path); err != nil {
 			return nil, fmt.Errorf("delete files for folder: %w", err)
 		}
 
-		_, err = s.db.Exec(`DELETE FROM indexed_folders WHERE path = ?`, path)
-		if err != nil {
+		if _, err := tx.Exec(`DELETE FROM indexed_folders WHERE path = ?`, path); err != nil {
 			return nil, fmt.Errorf("remove indexed folder: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit tx: %w", err)
 		}
 
 		s.logger.Info("removed folder with data", "path", path, "vectorsRemoved", len(vecIDs))
 		return vecIDs, nil
 	}
 
-	_, err := s.db.Exec(`DELETE FROM indexed_folders WHERE path = ?`, path)
-	if err != nil {
+	if _, err := tx.Exec(`DELETE FROM indexed_folders WHERE path = ?`, path); err != nil {
 		return nil, fmt.Errorf("remove indexed folder: %w", err)
 	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit tx: %w", err)
+	}
+
 	s.logger.Info("removed folder (data kept)", "path", path)
 	return nil, nil
 }

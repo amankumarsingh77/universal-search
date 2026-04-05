@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"universal-search/internal/platform"
+
 	"github.com/joho/godotenv"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/menu"
@@ -20,8 +22,11 @@ import (
 
 // localFileHandler serves local filesystem files for preview/thumbnails.
 // Requests with paths starting with "/localfile/" are served from the
-// actual filesystem path after stripping the prefix.
-type localFileHandler struct{}
+// actual filesystem path after stripping the prefix. Access is restricted
+// to the thumbnail directory and indexed folders.
+type localFileHandler struct {
+	app *App
+}
 
 func (h *localFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// URL path: /localfile/<absolute-path>
@@ -39,6 +44,11 @@ func (h *localFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.isAllowedPath(filePath) {
+		http.Error(w, "access denied", http.StatusForbidden)
+		return
+	}
+
 	// Set content type from extension
 	ext := filepath.Ext(filePath)
 	if ct := mime.TypeByExtension(ext); ct != "" {
@@ -46,6 +56,28 @@ func (h *localFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeFile(w, r, filePath)
+}
+
+// isAllowedPath checks if the requested path falls within the thumbnail
+// directory or one of the user's indexed folders.
+func (h *localFileHandler) isAllowedPath(filePath string) bool {
+	thumbDir, err := platform.ThumbnailDir()
+	if err == nil && strings.HasPrefix(filePath, thumbDir) {
+		return true
+	}
+
+	if h.app.store != nil {
+		folders, err := h.app.store.GetIndexedFolders()
+		if err == nil {
+			for _, folder := range folders {
+				if strings.HasPrefix(filePath, folder) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }
 
 //go:embed all:frontend/dist
@@ -117,7 +149,7 @@ func main() {
 		Menu:      appMenu,
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
-			Handler: &localFileHandler{},
+			Handler: &localFileHandler{app: app},
 		},
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,

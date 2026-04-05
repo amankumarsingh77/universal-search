@@ -46,10 +46,6 @@ var audioExtensions = map[string]string{
 	".flac": "audio/flac",
 }
 
-func isDocumentExtension(ext string) bool {
-	return IsDocumentFile(ext)
-}
-
 func Classify(filePath string) FileType {
 	ext := strings.ToLower(filepath.Ext(filePath))
 
@@ -62,7 +58,7 @@ func Classify(filePath string) FileType {
 	if _, ok := audioExtensions[ext]; ok {
 		return TypeAudio
 	}
-	if isDocumentExtension(ext) {
+	if IsDocumentFile(ext) {
 		return TypeDocument
 	}
 

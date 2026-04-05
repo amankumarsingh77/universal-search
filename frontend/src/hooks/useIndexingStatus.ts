@@ -7,6 +7,7 @@ export interface IndexingStatus {
   failedFiles: number;
   currentFile: string;
   isRunning: boolean;
+  paused: boolean;
   quotaPaused: boolean;
   quotaResumeAt: string;
 }
@@ -17,6 +18,7 @@ const defaultStatus: IndexingStatus = {
   failedFiles: 0,
   currentFile: '',
   isRunning: false,
+  paused: false,
   quotaPaused: false,
   quotaResumeAt: '',
 };

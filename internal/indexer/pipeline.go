@@ -26,6 +26,7 @@ type IndexStatus struct {
 	FailedFiles   int
 	CurrentFile   string
 	IsRunning     bool
+	Paused        bool
 	QuotaPaused   bool
 	QuotaResumeAt string
 }
@@ -90,7 +91,9 @@ func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder,
 func (p *Pipeline) Status() IndexStatus {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return p.status
+	s := p.status
+	s.Paused = p.paused
+	return s
 }
 
 func (p *Pipeline) Pause() {
@@ -133,6 +136,22 @@ func (p *Pipeline) SubmitFile(filePath string) {
 	case <-p.ctx.Done():
 		p.pendingJobs.Add(-1)
 	}
+}
+
+// DeleteFile removes a file from the store and vector index.
+func (p *Pipeline) DeleteFile(filePath string) {
+	vecIDs, err := p.store.RemoveFileByPath(filePath)
+	if err != nil {
+		p.logger.Debug("delete file skipped", "path", filePath, "error", err)
+		return
+	}
+	for _, vid := range vecIDs {
+		p.index.Delete(vid)
+	}
+	if len(vecIDs) > 0 && p.onJobDone != nil {
+		p.onJobDone()
+	}
+	p.logger.Info("deleted file from index", "path", filePath, "vectors", len(vecIDs))
 }
 
 func (p *Pipeline) worker() {
@@ -247,11 +266,17 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string) {
 		}
 	}
 
+	p.mu.RLock()
+	indexed := p.status.IndexedFiles
+	failed := p.status.FailedFiles
+	total := p.status.TotalFiles
+	p.mu.RUnlock()
+
 	p.logger.Info("folder indexing complete",
 		"folder", folderPath,
-		"indexed", p.status.IndexedFiles,
-		"failed", p.status.FailedFiles,
-		"total", p.status.TotalFiles,
+		"indexed", indexed,
+		"failed", failed,
+		"total", total,
 		"duration", time.Since(start),
 	)
 }
@@ -276,6 +301,10 @@ func (p *Pipeline) processSingleFile(filePath string) {
 }
 
 func (p *Pipeline) indexFile(filePath string) error {
+	if p.embedder == nil {
+		return fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
+	}
+
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return err

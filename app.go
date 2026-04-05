@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"time"
 
 	"universal-search/internal/embedder"
@@ -53,6 +54,7 @@ type IndexStatusDTO struct {
 	FailedFiles   int    `json:"failedFiles"`
 	CurrentFile   string `json:"currentFile"`
 	IsRunning     bool   `json:"isRunning"`
+	Paused        bool   `json:"paused"`
 	QuotaPaused   bool   `json:"quotaPaused"`
 	QuotaResumeAt string `json:"quotaResumeAt"`
 }
@@ -233,6 +235,7 @@ func (a *App) GetIndexStatus() IndexStatusDTO {
 		FailedFiles:   s.FailedFiles,
 		CurrentFile:   s.CurrentFile,
 		IsRunning:     s.IsRunning,
+		Paused:        s.Paused,
 		QuotaPaused:   s.QuotaPaused,
 		QuotaResumeAt: s.QuotaResumeAt,
 	}
@@ -325,13 +328,30 @@ func (a *App) GetFolders() ([]string, error) {
 
 // OpenFile opens a file using the system default application.
 func (a *App) OpenFile(path string) {
-	exec.Command("xdg-open", path).Start()
+	openPath(path)
 }
 
 // OpenFolder opens the folder containing the given file path.
 func (a *App) OpenFolder(path string) {
-	dir := filepath.Dir(path)
-	exec.Command("xdg-open", dir).Start()
+	openPath(filepath.Dir(path))
+}
+
+// openPath opens a file or directory using the platform-specific default handler.
+func openPath(path string) {
+	var cmd string
+	var args []string
+	switch goruntime.GOOS {
+	case "darwin":
+		cmd = "open"
+		args = []string{path}
+	case "windows":
+		cmd = "cmd"
+		args = []string{"/c", "start", "", path}
+	default: // linux and others
+		cmd = "xdg-open"
+		args = []string{path}
+	}
+	exec.Command(cmd, args...).Start()
 }
 
 // GetPreviewClipPath extracts a short preview clip from a video at the given
@@ -362,6 +382,10 @@ func (a *App) watchEvents(events <-chan watcher.FileEvent) {
 		case watcher.FileCreated, watcher.FileModified:
 			if a.pipeline != nil {
 				a.pipeline.SubmitFile(ev.Path)
+			}
+		case watcher.FileDeleted:
+			if a.pipeline != nil {
+				a.pipeline.DeleteFile(ev.Path)
 			}
 		}
 	}

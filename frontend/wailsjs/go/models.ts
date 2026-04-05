@@ -6,6 +6,7 @@ export namespace main {
 	    failedFiles: number;
 	    currentFile: string;
 	    isRunning: boolean;
+	    paused: boolean;
 	    quotaPaused: boolean;
 	    quotaResumeAt: string;
 	
@@ -20,6 +21,7 @@ export namespace main {
 	        this.failedFiles = source["failedFiles"];
 	        this.currentFile = source["currentFile"];
 	        this.isRunning = source["isRunning"];
+	        this.paused = source["paused"];
 	        this.quotaPaused = source["quotaPaused"];
 	        this.quotaResumeAt = source["quotaResumeAt"];
 	    }

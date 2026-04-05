@@ -13,7 +13,6 @@ function getFileName(path: string): string {
 
 export function IndexingBar({ status }: IndexingBarProps) {
   const [expanded, setExpanded] = useState(false);
-  const [paused, setPaused] = useState(false);
 
   if (!status.isRunning && status.indexedFiles === 0) {
     return null;
@@ -28,12 +27,10 @@ export function IndexingBar({ status }: IndexingBarProps) {
   const hasErrors = status.failedFiles > 0;
 
   const handlePauseResume = () => {
-    if (paused) {
+    if (status.paused) {
       ResumeIndexing();
-      setPaused(false);
     } else {
       PauseIndexing();
-      setPaused(true);
     }
   };
 
@@ -93,7 +90,7 @@ export function IndexingBar({ status }: IndexingBarProps) {
             onClick={handlePauseResume}
             style={styles.pauseButton}
           >
-            {paused ? '▶ Resume' : '⏸ Pause'}
+            {status.paused ? '▶ Resume' : '⏸ Pause'}
           </button>
         </div>
       )}

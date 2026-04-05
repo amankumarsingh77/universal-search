@@ -144,14 +144,6 @@ func (e *Embedder) EmbedQuery(ctx context.Context, query string) ([]float32, err
 	return e.embedOne(ctx, []*genai.Content{content})
 }
 
-// EmbedDocument embeds a text document using the inline instruction format
-// required by gemini-embedding-2-preview.
-func (e *Embedder) EmbedDocument(ctx context.Context, text string) ([]float32, error) {
-	instructed := fmt.Sprintf("title: none | text: %s", text)
-	content := genai.NewContentFromText(instructed, genai.RoleUser)
-	return e.embedOne(ctx, []*genai.Content{content})
-}
-
 // EmbedDocumentWithTitle embeds a text document with a title using the inline
 // instruction format required by gemini-embedding-2-preview.
 func (e *Embedder) EmbedDocumentWithTitle(ctx context.Context, title, text string) ([]float32, error) {

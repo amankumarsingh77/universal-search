@@ -37,6 +37,7 @@ Video pipeline follows sentrysearch patterns: 30s chunks with 5s overlap, 480p/5
 - Use `RETRIEVAL_DOCUMENT` task type for indexing, `RETRIEVAL_QUERY` for search queries.
 - FFmpeg is called as a subprocess, not via Go bindings.
 - **Do not add Claude as a co-author in commit messages.** No `Co-Authored-By` lines.
+- **Never commit docs, specs, or plans.** Files in `docs/` (design specs, plans, research notes) are local-only and must not be committed to git.
 
 ## Build & Run
 
@@ -63,3 +64,10 @@ cd frontend && npm install && npm run dev
 # Lint
 cd frontend && npm run lint
 ```
+
+## Git rules
+
+- Never commit docs/ — these are local working files, not part of the deliverable.
+- Never add Co-Authored-By or any AI attribution to commits.
+- No emojis in commit messages.
+- Write commit messages in a natural, human tone — as if the developer wrote them. Keep them concise and descriptive.

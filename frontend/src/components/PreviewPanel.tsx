@@ -1,5 +1,6 @@
 import type { SearchResultDTO } from '../hooks/useSearch';
 import { formatSize } from '../utils/format';
+import { modKey } from '../utils/platform';
 import { VideoPreview } from './previews/VideoPreview';
 import { ImagePreview } from './previews/ImagePreview';
 import { TextPreview } from './previews/TextPreview';
@@ -73,7 +74,7 @@ export function PreviewPanel({ result }: PreviewPanelProps) {
           <kbd style={styles.kbd}>Enter</kbd> Open file
         </span>
         <span style={styles.shortcut}>
-          <kbd style={styles.kbd}>Ctrl+Enter</kbd> Open folder
+          <kbd style={styles.kbd}>{modKey}+Enter</kbd> Open folder
         </span>
       </div>
     </div>

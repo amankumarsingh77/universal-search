@@ -6,9 +6,10 @@ interface ResultsListProps {
   results: SearchResultDTO[];
   selectedIndex: number;
   onSelect: (index: number) => void;
+  onOpen: (filePath: string) => void;
 }
 
-export function ResultsList({ results, selectedIndex, onSelect }: ResultsListProps) {
+export function ResultsList({ results, selectedIndex, onSelect, onOpen }: ResultsListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemHeight = 56;
 
@@ -47,6 +48,7 @@ export function ResultsList({ results, selectedIndex, onSelect }: ResultsListPro
           result={result}
           isSelected={index === selectedIndex}
           onClick={() => onSelect(index)}
+          onDoubleClick={() => onOpen(result.filePath)}
         />
       ))}
     </div>

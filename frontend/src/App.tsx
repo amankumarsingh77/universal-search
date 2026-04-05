@@ -86,6 +86,7 @@ function App() {
           results={results}
           selectedIndex={selectedIndex}
           onSelect={setSelectedIndex}
+          onOpen={OpenFile}
         />
         <PreviewPanel result={selectedResult} />
       </div>

@@ -5,6 +5,7 @@ interface ResultItemProps {
   result: SearchResultDTO;
   isSelected: boolean;
   onClick: () => void;
+  onDoubleClick: () => void;
 }
 
 function formatTimestamp(seconds: number): string {
@@ -47,12 +48,13 @@ function getSecondaryText(result: SearchResultDTO): string {
   return parts.join(' \u00b7 ');
 }
 
-export function ResultItem({ result, isSelected, onClick }: ResultItemProps) {
+export function ResultItem({ result, isSelected, onClick, onDoubleClick }: ResultItemProps) {
   const hasThumbnail = result.thumbnailPath && result.thumbnailPath.length > 0;
 
   return (
     <div
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       style={{
         ...styles.container,
         background: isSelected ? 'var(--bg-selected)' : 'transparent',

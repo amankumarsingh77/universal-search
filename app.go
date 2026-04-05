@@ -110,14 +110,18 @@ func (a *App) startup(ctx context.Context) {
 		log.Warn("embedder not available", "error", err)
 	}
 
-	if a.embedder != nil {
-		a.embedder.StartProbeLoop(ctx)
-	}
-
 	a.engine = search.New(a.store, a.index, a.logger)
 
+	// Check ffmpeg/ffprobe availability for video processing.
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		log.Warn("ffmpeg not found in PATH — video thumbnails and previews will not work")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		log.Warn("ffprobe not found in PATH — video duration detection will not work")
+	}
+
 	thumbDir, _ := platform.ThumbnailDir()
-	a.pipeline = indexer.NewPipeline(a.store, a.index, a.embedder, thumbDir, a.logger)
+	a.pipeline = indexer.NewPipeline(a.store, a.index, a.embedder, thumbDir, a.logger, a.saveIndex)
 
 	// Start file watcher.
 	eventCh := make(chan watcher.FileEvent, 100)
@@ -250,18 +254,14 @@ func (a *App) ResumeIndexing() {
 
 // ReindexNow triggers a full re-index of all watched folders in the background.
 func (a *App) ReindexNow() {
-	go func() {
-		runtime.ResetSignalHandlers()
-		if a.store == nil || a.pipeline == nil {
-			return
-		}
-		folders, _ := a.store.GetIndexedFolders()
-		patterns, _ := a.store.GetExcludedPatterns()
-		for _, folder := range folders {
-			a.pipeline.IndexFolder(folder, patterns)
-		}
-		a.saveIndex()
-	}()
+	if a.store == nil || a.pipeline == nil {
+		return
+	}
+	folders, _ := a.store.GetIndexedFolders()
+	patterns, _ := a.store.GetExcludedPatterns()
+	for _, folder := range folders {
+		a.pipeline.SubmitFolder(folder, patterns)
+	}
 }
 
 // AddFolder adds a folder to the indexed folders list, starts watching it,
@@ -277,15 +277,11 @@ func (a *App) AddFolder(path string) error {
 	if a.watcher != nil {
 		a.watcher.Add(path)
 	}
-	// Trigger indexing for the newly added folder.
-	go func() {
-		runtime.ResetSignalHandlers()
-		if a.pipeline != nil {
-			patterns, _ := a.store.GetExcludedPatterns()
-			a.pipeline.IndexFolder(path, patterns)
-			a.saveIndex()
-		}
-	}()
+	// Queue indexing for the newly added folder.
+	if a.pipeline != nil {
+		patterns, _ := a.store.GetExcludedPatterns()
+		a.pipeline.SubmitFolder(path, patterns)
+	}
 	return nil
 }
 
@@ -341,6 +337,11 @@ func (a *App) OpenFolder(path string) {
 // GetPreviewClipPath extracts a short preview clip from a video at the given
 // timestamp using ffmpeg. Returns the path to the generated clip.
 func (a *App) GetPreviewClipPath(videoPath string, timestamp float64) (string, error) {
+	// Validate video file still exists
+	if _, err := os.Stat(videoPath); err != nil {
+		return "", fmt.Errorf("video file not found: %s", videoPath)
+	}
+
 	thumbDir, err := platform.ThumbnailDir()
 	if err != nil {
 		return "", err
@@ -352,20 +353,20 @@ func (a *App) GetPreviewClipPath(videoPath string, timestamp float64) (string, e
 		return clipPath, nil
 	}
 
-	err = indexer.ExtractPreviewClip(videoPath, clipPath, timestamp, 15)
-	return clipPath, err
+	if err := indexer.ExtractPreviewClip(videoPath, clipPath, timestamp, 15); err != nil {
+		return "", fmt.Errorf("ffmpeg preview clip failed: %w", err)
+	}
+	return clipPath, nil
 }
 
-// watchEvents processes file watcher events and triggers single-file indexing.
+// watchEvents processes file watcher events and queues single-file indexing.
 func (a *App) watchEvents(events <-chan watcher.FileEvent) {
 	runtime.ResetSignalHandlers()
 	for ev := range events {
 		switch ev.Type {
 		case watcher.FileCreated, watcher.FileModified:
 			if a.pipeline != nil {
-				if err := a.pipeline.IndexSingleFile(ev.Path); err == nil {
-					a.saveIndex()
-				}
+				a.pipeline.SubmitFile(ev.Path)
 			}
 		}
 	}

@@ -53,7 +53,7 @@ var assets embed.FS
 
 func init() {
 	// Load .env file if present (errors are ignored — file is optional).
-	godotenv.Load()
+	godotenv.Overload()
 
 	// Prevent WebKit2GTK DMABUF renderer crashes on NVIDIA GPUs (Ubuntu 24.04+).
 	// See: https://bugs.launchpad.net/ubuntu/+source/webkit2gtk/+bug/2062995

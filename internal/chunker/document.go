@@ -307,31 +307,9 @@ func hexVal(b byte) (byte, bool) {
 }
 
 func chunkTextContent(text string, startIndex int) ([]Chunk, error) {
-	if len(text) == 0 {
+	chunks := chunkString(strings.TrimSpace(text), startIndex)
+	if len(chunks) == 0 {
 		return nil, nil
-	}
-
-	var chunks []Chunk
-	idx := startIndex
-	for start := 0; start < len(text); {
-		end := start + textChunkSize
-		if end > len(text) {
-			end = len(text)
-		}
-
-		content := text[start:end]
-		if len(strings.TrimSpace(content)) > 0 {
-			chunks = append(chunks, Chunk{
-				Text:  content,
-				Index: idx,
-			})
-			idx++
-		}
-
-		start = end - textChunkOverlap
-		if start >= len(text) || end >= len(text) {
-			break
-		}
 	}
 
 	totalLen := 0

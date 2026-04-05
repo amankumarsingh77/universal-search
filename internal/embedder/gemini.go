@@ -125,12 +125,8 @@ func (e *Embedder) embed(ctx context.Context, contents []*genai.Content) ([][]fl
 	return nil, fmt.Errorf("embedder: all %d retries exhausted: %w", maxRetries, lastErr)
 }
 
-// EmbedQuery embeds a search query using the inline instruction format
-// required by gemini-embedding-2-preview.
-func (e *Embedder) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
-	instructed := fmt.Sprintf("task: search result | query: %s", query)
-	content := genai.NewContentFromText(instructed, genai.RoleUser)
-	result, err := e.embed(ctx, []*genai.Content{content})
+func (e *Embedder) embedOne(ctx context.Context, contents []*genai.Content) ([]float32, error) {
+	result, err := e.embed(ctx, contents)
 	if err != nil {
 		return nil, err
 	}
@@ -138,6 +134,14 @@ func (e *Embedder) EmbedQuery(ctx context.Context, query string) ([]float32, err
 		return nil, fmt.Errorf("embedder: no embeddings returned")
 	}
 	return result[0], nil
+}
+
+// EmbedQuery embeds a search query using the inline instruction format
+// required by gemini-embedding-2-preview.
+func (e *Embedder) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	instructed := fmt.Sprintf("task: search result | query: %s", query)
+	content := genai.NewContentFromText(instructed, genai.RoleUser)
+	return e.embedOne(ctx, []*genai.Content{content})
 }
 
 // EmbedDocument embeds a text document using the inline instruction format
@@ -145,14 +149,7 @@ func (e *Embedder) EmbedQuery(ctx context.Context, query string) ([]float32, err
 func (e *Embedder) EmbedDocument(ctx context.Context, text string) ([]float32, error) {
 	instructed := fmt.Sprintf("title: none | text: %s", text)
 	content := genai.NewContentFromText(instructed, genai.RoleUser)
-	result, err := e.embed(ctx, []*genai.Content{content})
-	if err != nil {
-		return nil, err
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("embedder: no embeddings returned")
-	}
-	return result[0], nil
+	return e.embedOne(ctx, []*genai.Content{content})
 }
 
 // EmbedDocumentWithTitle embeds a text document with a title using the inline
@@ -160,19 +157,11 @@ func (e *Embedder) EmbedDocument(ctx context.Context, text string) ([]float32, e
 func (e *Embedder) EmbedDocumentWithTitle(ctx context.Context, title, text string) ([]float32, error) {
 	instructed := fmt.Sprintf("title: %s | text: %s", title, text)
 	content := genai.NewContentFromText(instructed, genai.RoleUser)
-	result, err := e.embed(ctx, []*genai.Content{content})
-	if err != nil {
-		return nil, err
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("embedder: no embeddings returned")
-	}
-	return result[0], nil
+	return e.embedOne(ctx, []*genai.Content{content})
 }
 
 // EmbedBytes embeds binary content (image, video, audio) with a document
-// instruction Part alongside the binary data. This tells the model the
-// content is a document to be retrieved.
+// instruction Part alongside the binary data.
 func (e *Embedder) EmbedBytes(ctx context.Context, data []byte, mimeType, title string) ([]float32, error) {
 	if title == "" {
 		title = "none"
@@ -180,12 +169,5 @@ func (e *Embedder) EmbedBytes(ctx context.Context, data []byte, mimeType, title 
 	instruction := genai.NewPartFromText(fmt.Sprintf("title: %s | text: embedded media", title))
 	media := genai.NewPartFromBytes(data, mimeType)
 	content := genai.NewContentFromParts([]*genai.Part{instruction, media}, genai.RoleUser)
-	result, err := e.embed(ctx, []*genai.Content{content})
-	if err != nil {
-		return nil, err
-	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("embedder: no embeddings returned")
-	}
-	return result[0], nil
+	return e.embedOne(ctx, []*genai.Content{content})
 }

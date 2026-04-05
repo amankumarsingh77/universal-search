@@ -337,11 +337,6 @@ func (a *App) OpenFolder(path string) {
 // GetPreviewClipPath extracts a short preview clip from a video at the given
 // timestamp using ffmpeg. Returns the path to the generated clip.
 func (a *App) GetPreviewClipPath(videoPath string, timestamp float64) (string, error) {
-	// Validate video file still exists
-	if _, err := os.Stat(videoPath); err != nil {
-		return "", fmt.Errorf("video file not found: %s", videoPath)
-	}
-
 	thumbDir, err := platform.ThumbnailDir()
 	if err != nil {
 		return "", err

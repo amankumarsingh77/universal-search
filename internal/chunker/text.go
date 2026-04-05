@@ -40,18 +40,21 @@ func ChunkText(filePath string) ([]Chunk, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read file: %w", err)
 	}
+	return chunkString(string(data), 0), nil
+}
 
-	content := string(data)
+// chunkString splits text into overlapping chunks starting at the given index.
+func chunkString(content string, startIndex int) []Chunk {
 	if len(content) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	if len(content) <= textChunkSize {
-		return []Chunk{{Text: content, Index: 0}}, nil
+		return []Chunk{{Text: content, Index: startIndex}}
 	}
 
 	var chunks []Chunk
-	idx := 0
+	idx := startIndex
 	for start := 0; start < len(content); {
 		end := start + textChunkSize
 		if end > len(content) {
@@ -65,13 +68,10 @@ func ChunkText(filePath string) ([]Chunk, error) {
 		idx++
 
 		start = end - textChunkOverlap
-		if start >= len(content) {
-			break
-		}
-		if end >= len(content) {
+		if start >= len(content) || end >= len(content) {
 			break
 		}
 	}
 
-	return chunks, nil
+	return chunks
 }

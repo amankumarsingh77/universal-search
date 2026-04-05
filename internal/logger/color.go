@@ -151,7 +151,6 @@ func cloneStrings(s []string) []string {
 	return c
 }
 
-// isTerminal reports whether w is connected to a terminal.
 func isTerminal(w io.Writer) bool {
 	if f, ok := w.(*os.File); ok {
 		return term.IsTerminal(int(f.Fd()))

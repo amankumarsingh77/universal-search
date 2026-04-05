@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"universal-search/internal/chunker"
@@ -59,9 +60,10 @@ type Pipeline struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	jobCh     chan indexJob
-	onJobDone OnJobDone
-	workerWg  sync.WaitGroup
+	jobCh      chan indexJob
+	onJobDone  OnJobDone
+	workerWg   sync.WaitGroup
+	pendingJobs atomic.Int32
 }
 
 func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder, thumbDir string, logger *slog.Logger, onDone OnJobDone) *Pipeline {
@@ -116,16 +118,20 @@ func (p *Pipeline) Stop() {
 }
 
 func (p *Pipeline) SubmitFolder(folderPath string, excludePatterns []string) {
+	p.pendingJobs.Add(1)
 	select {
 	case p.jobCh <- indexJob{typ: jobFolder, folderPath: folderPath, excludePatterns: excludePatterns}:
 	case <-p.ctx.Done():
+		p.pendingJobs.Add(-1)
 	}
 }
 
 func (p *Pipeline) SubmitFile(filePath string) {
+	p.pendingJobs.Add(1)
 	select {
 	case p.jobCh <- indexJob{typ: jobSingleFile, filePath: filePath}:
 	case <-p.ctx.Done():
+		p.pendingJobs.Add(-1)
 	}
 }
 
@@ -139,6 +145,13 @@ func (p *Pipeline) worker() {
 				p.processFolder(job.folderPath, job.excludePatterns)
 			case jobSingleFile:
 				p.processSingleFile(job.filePath)
+			}
+			remaining := p.pendingJobs.Add(-1)
+			if remaining == 0 {
+				p.mu.Lock()
+				p.status.IsRunning = false
+				p.status.CurrentFile = ""
+				p.mu.Unlock()
 			}
 			if p.onJobDone != nil {
 				p.onJobDone()
@@ -234,12 +247,6 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string) {
 		}
 	}
 
-	p.mu.Lock()
-	if len(p.jobCh) == 0 {
-		p.status.IsRunning = false
-	}
-	p.mu.Unlock()
-
 	p.logger.Info("folder indexing complete",
 		"folder", folderPath,
 		"indexed", p.status.IndexedFiles,
@@ -266,13 +273,6 @@ func (p *Pipeline) processSingleFile(filePath string) {
 		p.status.IndexedFiles++
 		p.mu.Unlock()
 	}
-
-	p.mu.Lock()
-	if len(p.jobCh) == 0 {
-		p.status.IsRunning = false
-		p.status.CurrentFile = ""
-	}
-	p.mu.Unlock()
 }
 
 func (p *Pipeline) indexFile(filePath string) error {

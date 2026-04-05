@@ -10,12 +10,20 @@ export function GetFolders() {
   return window['go']['main']['App']['GetFolders']();
 }
 
+export function GetSetting(arg1) {
+  return window['go']['main']['App']['GetSetting'](arg1);
+}
+
 export function GetIndexStatus() {
   return window['go']['main']['App']['GetIndexStatus']();
 }
 
 export function GetPreviewClipPath(arg1, arg2) {
   return window['go']['main']['App']['GetPreviewClipPath'](arg1, arg2);
+}
+
+export function HideWindow() {
+  return window['go']['main']['App']['HideWindow']();
 }
 
 export function OpenFile(arg1) {
@@ -44,4 +52,16 @@ export function ResumeIndexing() {
 
 export function Search(arg1) {
   return window['go']['main']['App']['Search'](arg1);
+}
+
+export function SetSetting(arg1, arg2) {
+  return window['go']['main']['App']['SetSetting'](arg1, arg2);
+}
+
+export function ShowWindow() {
+  return window['go']['main']['App']['ShowWindow']();
+}
+
+export function ToggleWindow() {
+  return window['go']['main']['App']['ToggleWindow']();
 }

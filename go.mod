@@ -4,11 +4,13 @@ go 1.26.0
 
 require (
 	github.com/TFMV/hnsw v0.4.0
+	github.com/energye/systray v1.0.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/joho/godotenv v1.5.1
 	github.com/ncruces/go-sqlite3 v0.33.0
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/xuri/excelize/v2 v2.10.1
+	golang.design/x/hotkey v0.4.1
 	golang.org/x/image v0.38.0
 	golang.org/x/term v0.41.0
 	google.golang.org/genai v1.51.0

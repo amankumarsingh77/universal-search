@@ -6,9 +6,13 @@ export function AddFolder(arg1:string):Promise<void>;
 
 export function GetFolders():Promise<Array<string>>;
 
+export function GetSetting(arg1:string):Promise<string>;
+
 export function GetIndexStatus():Promise<main.IndexStatusDTO>;
 
 export function GetPreviewClipPath(arg1:string,arg2:number):Promise<string>;
+
+export function HideWindow():Promise<void>;
 
 export function OpenFile(arg1:string):Promise<void>;
 
@@ -23,3 +27,9 @@ export function RemoveFolder(arg1:string,arg2:boolean):Promise<void>;
 export function ResumeIndexing():Promise<void>;
 
 export function Search(arg1:string):Promise<Array<main.SearchResultDTO>>;
+
+export function SetSetting(arg1:string,arg2:string):Promise<void>;
+
+export function ShowWindow():Promise<void>;
+
+export function ToggleWindow():Promise<void>;

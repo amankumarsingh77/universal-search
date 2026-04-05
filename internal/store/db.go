@@ -85,6 +85,11 @@ CREATE TABLE IF NOT EXISTS excluded_patterns (
 	id      INTEGER PRIMARY KEY AUTOINCREMENT,
 	pattern TEXT NOT NULL UNIQUE
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 `
 
 // NewStore opens the SQLite database at dsn, enables WAL mode and foreign keys,
@@ -400,6 +405,28 @@ func (s *Store) RemoveIndexedFolder(path string, deleteData bool) ([]string, err
 
 	s.logger.Info("removed folder (data kept)", "path", path)
 	return nil, nil
+}
+
+// GetSetting returns the value for a key, or defaultVal if not found.
+func (s *Store) GetSetting(key, defaultVal string) (string, error) {
+	var val string
+	err := s.db.QueryRow("SELECT value FROM settings WHERE key = ?", key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return defaultVal, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return val, nil
+}
+
+// SetSetting inserts or updates a setting.
+func (s *Store) SetSetting(key, value string) error {
+	_, err := s.db.Exec(
+		"INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+		key, value,
+	)
+	return err
 }
 
 // GetExcludedPatterns returns all excluded glob patterns.

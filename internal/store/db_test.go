@@ -273,6 +273,83 @@ func TestRemoveIndexedFolder_WithData(t *testing.T) {
 	}
 }
 
+func TestSetAndGetSetting(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.SetSetting("hotkey", "Ctrl+Space")
+	if err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	val, err := s.GetSetting("hotkey", "")
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if val != "Ctrl+Space" {
+		t.Fatalf("expected Ctrl+Space, got %s", val)
+	}
+}
+
+func TestGetSettingDefault(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	val, err := s.GetSetting("missing_key", "fallback")
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if val != "fallback" {
+		t.Fatalf("expected fallback, got %s", val)
+	}
+}
+
+func TestSetSettingUpsert(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	s.SetSetting("theme", "light")
+	s.SetSetting("theme", "dark")
+
+	val, err := s.GetSetting("theme", "")
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if val != "dark" {
+		t.Fatalf("expected dark, got %s", val)
+	}
+}
+
+func TestGetSettingEmptyValue(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.SetSetting("empty_key", "")
+	if err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	val, err := s.GetSetting("empty_key", "default")
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if val != "" {
+		t.Fatalf("expected empty string, got %s", val)
+	}
+}
+
 func TestUpsertFile_UpdatesExisting(t *testing.T) {
 	s, err := NewStore(":memory:", testLogger)
 	if err != nil {

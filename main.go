@@ -83,6 +83,9 @@ func (h *localFileHandler) isAllowedPath(filePath string) bool {
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed assets/tray-icon.png
+var trayIcon []byte
+
 func init() {
 	// Load .env file if present (errors are ignored — file is optional).
 	godotenv.Overload()
@@ -96,6 +99,7 @@ func init() {
 
 func main() {
 	app := NewApp()
+	app.trayIcon = trayIcon
 
 	// Build application menu.
 	appMenu := menu.NewMenu()
@@ -148,8 +152,9 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
-		Frameless:        true,
-		AlwaysOnTop:      true,
+		Frameless:         true,
+		AlwaysOnTop:       true,
+		HideWindowOnClose: true,
 		BackgroundColour: &options.RGBA{R: 10, G: 10, B: 10, A: 255},
 	})
 

@@ -7,7 +7,7 @@ import { FolderManager } from './components/FolderManager';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
-import { OpenFile, OpenFolder } from '../wailsjs/go/main/App';
+import { OpenFile, OpenFolder, HideWindow } from '../wailsjs/go/main/App';
 
 function App() {
   const {
@@ -29,6 +29,16 @@ function App() {
     });
     return () => {
       EventsOff('open-folder-manager');
+    };
+  }, []);
+
+  useEffect(() => {
+    const _cancel = EventsOn('window-shown', () => {
+      const input = document.querySelector('input[type="text"]') as HTMLInputElement;
+      if (input) input.focus();
+    });
+    return () => {
+      EventsOff('window-shown');
     };
   }, []);
 
@@ -62,6 +72,8 @@ function App() {
         case 'Escape':
           if (query) {
             setQuery('');
+          } else {
+            HideWindow();
           }
           break;
       }

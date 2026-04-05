@@ -8,8 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"sync"
 	"time"
 
+	"universal-search/internal/desktop"
 	"universal-search/internal/embedder"
 	"universal-search/internal/indexer"
 	"universal-search/internal/logger"
@@ -24,15 +26,20 @@ import (
 
 // App struct holds all backend components for the Wails application.
 type App struct {
-	ctx       context.Context
-	logger    *slog.Logger
-	store     *store.Store
-	index     *vectorstore.Index
-	indexPath string
-	embedder  *embedder.Embedder
-	engine    *search.Engine
-	pipeline  *indexer.Pipeline
-	watcher   *watcher.Watcher
+	ctx           context.Context
+	logger        *slog.Logger
+	store         *store.Store
+	index         *vectorstore.Index
+	indexPath     string
+	embedder      *embedder.Embedder
+	engine        *search.Engine
+	pipeline      *indexer.Pipeline
+	watcher       *watcher.Watcher
+	tray          *desktop.TrayManager
+	hotkeyMgr     *desktop.HotkeyManager
+	trayIcon      []byte
+	windowMu      sync.Mutex
+	windowVisible bool
 }
 
 // SearchResultDTO is the JSON-serializable search result sent to the frontend.
@@ -143,11 +150,20 @@ func (a *App) startup(ctx context.Context) {
 		}
 	})
 
+	a.tray = desktop.NewTrayManager(a, a.trayIcon, log)
+	a.tray.Start()
+
+	a.hotkeyMgr = desktop.NewHotkeyManager(a, a.store, log)
+	if err := a.hotkeyMgr.Start(); err != nil {
+		log.Warn("global hotkey unavailable", "error", err)
+	}
+
 	// Background goroutines.
 	go a.watchEvents(eventCh)
 	go a.startWatchingFolders()
 	go a.emitStatusLoop()
 
+	a.windowVisible = true
 	log.Info("startup complete")
 }
 
@@ -166,6 +182,12 @@ func (a *App) saveIndex() {
 func (a *App) shutdown(ctx context.Context) {
 	log := a.logger.WithGroup("app")
 	log.Info("shutting down")
+	if a.hotkeyMgr != nil {
+		a.hotkeyMgr.Stop()
+	}
+	if a.tray != nil {
+		a.tray.Stop()
+	}
 	if a.pipeline != nil {
 		a.pipeline.Stop()
 	}
@@ -372,6 +394,53 @@ func (a *App) GetPreviewClipPath(videoPath string, timestamp float64) (string, e
 		return "", fmt.Errorf("ffmpeg preview clip failed: %w", err)
 	}
 	return clipPath, nil
+}
+
+func (a *App) ShowWindow() {
+	a.windowMu.Lock()
+	defer a.windowMu.Unlock()
+	runtime.WindowShow(a.ctx)
+	runtime.WindowCenter(a.ctx)
+	a.windowVisible = true
+	runtime.EventsEmit(a.ctx, "window-shown")
+}
+
+func (a *App) HideWindow() {
+	a.windowMu.Lock()
+	defer a.windowMu.Unlock()
+	runtime.WindowHide(a.ctx)
+	a.windowVisible = false
+}
+
+func (a *App) ToggleWindow() {
+	a.windowMu.Lock()
+	visible := a.windowVisible
+	a.windowMu.Unlock()
+	if visible {
+		a.HideWindow()
+	} else {
+		a.ShowWindow()
+	}
+}
+
+func (a *App) EmitEvent(name string) {
+	runtime.EventsEmit(a.ctx, name)
+}
+
+func (a *App) Quit() {
+	runtime.Quit(a.ctx)
+}
+
+func (a *App) GetSetting(key string) string {
+	val, _ := a.store.GetSetting(key, "")
+	return val
+}
+
+func (a *App) SetSetting(key, value string) error {
+	if key == "global_hotkey" && a.hotkeyMgr != nil {
+		return a.hotkeyMgr.ChangeHotkey(value)
+	}
+	return a.store.SetSetting(key, value)
 }
 
 // watchEvents processes file watcher events and queues single-file indexing.

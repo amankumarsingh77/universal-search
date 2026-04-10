@@ -429,6 +429,26 @@ func (s *Store) SetSetting(key, value string) error {
 	return err
 }
 
+// RemoveExcludedPattern removes a folder name glob from the exclusion list.
+// Returns nil if the pattern does not exist.
+func (s *Store) RemoveExcludedPattern(pattern string) error {
+	_, err := s.db.Exec(`DELETE FROM excluded_patterns WHERE pattern = ?`, pattern)
+	if err != nil {
+		return fmt.Errorf("remove excluded pattern: %w", err)
+	}
+	return nil
+}
+
+// HasAnyExcludedPattern returns true if the excluded_patterns table is non-empty.
+func (s *Store) HasAnyExcludedPattern() (bool, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM excluded_patterns`).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("count excluded patterns: %w", err)
+	}
+	return count > 0, nil
+}
+
 // GetExcludedPatterns returns all excluded glob patterns.
 func (s *Store) GetExcludedPatterns() ([]string, error) {
 	rows, err := s.db.Query(`SELECT pattern FROM excluded_patterns`)

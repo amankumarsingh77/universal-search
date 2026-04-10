@@ -35,6 +35,13 @@ function getTypeIcon(fileType: string): string {
   }
 }
 
+function getShortDir(filePath: string): string {
+  const parts = filePath.split('/');
+  parts.pop(); // remove filename
+  if (parts.length === 0) return '';
+  return parts.slice(-2).join('/');
+}
+
 function getSecondaryText(result: SearchResultDTO): string {
   const parts: string[] = [];
   const typeLabel = result.fileType.charAt(0).toUpperCase() + result.fileType.slice(1);
@@ -50,6 +57,8 @@ function getSecondaryText(result: SearchResultDTO): string {
 
 export function ResultItem({ result, isSelected, onClick, onDoubleClick }: ResultItemProps) {
   const hasThumbnail = result.thumbnailPath && result.thumbnailPath.length > 0;
+  const shortDir = getShortDir(result.filePath);
+  const scorePercent = Math.round(result.score * 100);
 
   return (
     <div
@@ -84,10 +93,16 @@ export function ResultItem({ result, isSelected, onClick, onDoubleClick }: Resul
       </div>
       <div style={styles.info}>
         <div style={styles.fileName}>{result.fileName}</div>
+        {shortDir ? (
+          <div style={styles.breadcrumb}>{shortDir}</div>
+        ) : null}
         <div style={{ ...styles.secondary, color: getTypeColor(result.fileType) }}>
           {getSecondaryText(result)}
         </div>
       </div>
+      {result.score > 0 ? (
+        <div style={styles.scoreBadge}>{scorePercent}%</div>
+      ) : null}
     </div>
   );
 }
@@ -96,8 +111,11 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
     alignItems: 'center',
-    padding: '8px 12px',
-    height: '56px',
+    paddingTop: '6px',
+    paddingBottom: '6px',
+    paddingLeft: '12px',
+    paddingRight: '12px',
+    minHeight: '56px',
     cursor: 'pointer',
     gap: '10px',
     transition: 'background 0.1s ease',
@@ -143,5 +161,21 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+  },
+  breadcrumb: {
+    fontSize: 11,
+    fontFamily: 'var(--font-sans)',
+    color: 'var(--text-tertiary)',
+    lineHeight: '15px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  scoreBadge: {
+    fontSize: '10px',
+    fontFamily: 'var(--font-sans)',
+    color: 'var(--text-tertiary)',
+    flexShrink: 0,
+    alignSelf: 'center',
   },
 };

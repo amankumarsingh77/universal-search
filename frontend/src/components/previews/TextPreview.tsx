@@ -1,78 +1,61 @@
-import type { SearchResultDTO } from '../../hooks/useSearch';
+import { useEffect, useState } from 'react';
+import { GetFilePreview } from '../../../wailsjs/go/main/App';
 
-interface TextPreviewProps {
-  result: SearchResultDTO;
+interface Props {
+  filePath: string;
 }
 
-export function TextPreview({ result }: TextPreviewProps) {
-  const isCode = result.fileType === 'code';
+export function TextPreview({ filePath }: Props) {
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [isBinary, setIsBinary] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    setContent(null);
+    setIsBinary(false);
+    GetFilePreview(filePath)
+      .then(text => { setContent(text); })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes('binary')) setIsBinary(true);
+        // other errors: show nothing (content stays null)
+      })
+      .finally(() => setLoading(false));
+  }, [filePath]);
+
+  if (loading) {
+    return <div style={styles.message}>Loading preview...</div>;
+  }
+  if (isBinary) {
+    return <div style={styles.message}>Binary file — no preview available</div>;
+  }
+  if (!content) {
+    return <div style={styles.message}>Could not read file</div>;
+  }
 
   return (
-    <div style={styles.container}>
-      <div
-        style={{
-          ...styles.content,
-          borderColor: isCode ? 'var(--accent-code)' : 'var(--border)',
-        }}
-      >
-        <div style={styles.header}>
-          <span style={{ ...styles.badge, background: isCode ? 'var(--accent-code)' : 'var(--text-secondary)' }}>
-            {isCode ? 'CODE' : 'TEXT'}
-          </span>
-          <span style={styles.ext}>{result.extension}</span>
-        </div>
-        <div style={styles.body}>
-          <span style={styles.placeholder}>
-            Content preview available when file is opened
-          </span>
-        </div>
-      </div>
-    </div>
+    <pre style={styles.code}>{content}</pre>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: {
-    width: '100%',
-  },
-  content: {
-    borderRadius: 'var(--radius-md)',
-    border: '1px solid',
-    overflow: 'hidden',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '8px 12px',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-surface)',
-  },
-  badge: {
-    fontSize: '10px',
-    fontFamily: 'var(--font-mono)',
-    fontWeight: 600,
-    color: '#000',
-    padding: '1px 6px',
-    borderRadius: 'var(--radius-sm)',
-    textTransform: 'uppercase' as const,
-  },
-  ext: {
-    fontSize: '12px',
-    color: 'var(--text-secondary)',
-    fontFamily: 'var(--font-mono)',
-  },
-  body: {
+  message: {
     padding: '16px',
-    background: 'var(--bg-surface-2)',
-    minHeight: '120px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  placeholder: {
-    fontSize: '13px',
     color: 'var(--text-tertiary)',
-    fontFamily: 'var(--font-mono)',
+    fontSize: 13,
+  },
+  code: {
+    margin: 0,
+    padding: '12px 16px',
+    fontFamily: 'monospace',
+    fontSize: 12,
+    lineHeight: 1.5,
+    color: 'var(--text-secondary)',
+    backgroundColor: 'var(--bg-surface-2)',
+    overflowX: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-all',
+    borderRadius: 4,
   },
 };

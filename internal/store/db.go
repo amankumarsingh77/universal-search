@@ -48,6 +48,7 @@ type SearchResult struct {
 	VectorID  string
 	StartTime float64
 	EndTime   float64
+	Distance  float32 // cosine distance from vectorstore (0=identical, 2=opposite)
 }
 
 const schema = `

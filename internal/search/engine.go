@@ -51,14 +51,36 @@ func (e *Engine) SearchByVector(queryVec []float32, k int) ([]store.SearchResult
 		return nil, err
 	}
 
+	// Build distance map from vectorID to cosine distance.
+	distMap := make(map[string]float32, len(vecResults))
+	for _, r := range vecResults {
+		distMap[r.ID] = r.Distance
+	}
+	for i := range results {
+		results[i].Distance = distMap[results[i].VectorID]
+	}
+
 	// Build a lookup from vectorID to result for fast access
 	resultByVecID := make(map[string]store.SearchResult, len(results))
 	for _, r := range results {
 		resultByVecID[r.VectorID] = r
 	}
 
-	// Re-order by HNSW ranking and deduplicate by file path (keep best rank)
-	seen := make(map[string]bool)
+	// Re-order by HNSW ranking and deduplicate by file path (keep lowest distance)
+	best := make(map[string]store.SearchResult)
+	for _, id := range vectorIDs {
+		r, ok := resultByVecID[id]
+		if !ok {
+			continue
+		}
+		existing, seen := best[r.File.Path]
+		if !seen || r.Distance < existing.Distance {
+			best[r.File.Path] = r
+		}
+	}
+
+	// Re-traverse HNSW order to emit in rank order, capped at k.
+	emitted := make(map[string]bool)
 	var deduped []store.SearchResult
 	for _, id := range vectorIDs {
 		if len(deduped) >= k {
@@ -68,11 +90,14 @@ func (e *Engine) SearchByVector(queryVec []float32, k int) ([]store.SearchResult
 		if !ok {
 			continue
 		}
-		if seen[r.File.Path] {
+		if emitted[r.File.Path] {
 			continue
 		}
-		seen[r.File.Path] = true
-		deduped = append(deduped, r)
+		// Only emit the best chunk for this file.
+		if kept := best[r.File.Path]; kept.VectorID == r.VectorID {
+			emitted[r.File.Path] = true
+			deduped = append(deduped, r)
+		}
 	}
 
 	e.logger.Info("search completed", "results", len(deduped), "candidates", len(vecResults), "duration", time.Since(start))

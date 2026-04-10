@@ -132,36 +132,57 @@ func (idx *Index) Delete(id string) bool {
 	return deleted
 }
 
-// Save persists the index to disk. Creates two files:
-// {path}.graph for the HNSW graph and {path}.map for ID mappings.
+// Has reports whether a vector with the given ID exists in the in-memory index.
+func (idx *Index) Has(id string) bool {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	_, ok := idx.idToKey[id]
+	return ok
+}
+
+// Save persists the index to disk atomically. Writes to .graph.tmp and .map.tmp
+// then renames both to their final paths to avoid partial writes.
 func (idx *Index) Save(path string) error {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
 	idx.logger.Info("saving index to disk", "path", path, "vectors", len(idx.idToKey))
 
-	// Save graph
+	// Write graph to temp file, then rename atomically.
+	tmpGraph := path + ".graph.tmp"
 	sg := &hnsw.SavedGraph[int]{
 		Graph: idx.graph,
-		Path:  path + ".graph",
+		Path:  tmpGraph,
 	}
 	if err := sg.Save(); err != nil {
 		return fmt.Errorf("saving graph: %w", err)
 	}
 
-	// Save ID mappings
-	f, err := os.Create(path + ".map")
+	// Write map to temp file.
+	tmpMap := path + ".map.tmp"
+	f, err := os.Create(tmpMap)
 	if err != nil {
 		return fmt.Errorf("creating map file: %w", err)
 	}
-	defer f.Close()
-
 	w := bufio.NewWriter(f)
 	fmt.Fprintf(w, "%d\n", idx.nextKey)
 	for id, key := range idx.idToKey {
 		fmt.Fprintf(w, "%d\t%s\n", key, id)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		f.Close()
+		return fmt.Errorf("flushing map file: %w", err)
+	}
+	f.Close()
+
+	// Atomic renames.
+	if err := os.Rename(tmpGraph, path+".graph"); err != nil {
+		return fmt.Errorf("renaming graph: %w", err)
+	}
+	if err := os.Rename(tmpMap, path+".map"); err != nil {
+		return fmt.Errorf("renaming map: %w", err)
+	}
+	return nil
 }
 
 // LoadIndex loads a previously saved index from disk.

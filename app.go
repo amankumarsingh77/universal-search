@@ -418,6 +418,7 @@ func (a *App) GetPreviewClipPath(videoPath string, timestamp float64) (string, e
 func (a *App) ShowWindow() {
 	a.windowMu.Lock()
 	defer a.windowMu.Unlock()
+	a.logger.Info("showing window")
 	runtime.WindowShow(a.ctx)
 	runtime.WindowCenter(a.ctx)
 	a.windowVisible = true
@@ -427,6 +428,7 @@ func (a *App) ShowWindow() {
 func (a *App) HideWindow() {
 	a.windowMu.Lock()
 	defer a.windowMu.Unlock()
+	a.logger.Info("hiding window")
 	runtime.WindowHide(a.ctx)
 	a.windowVisible = false
 }
@@ -435,6 +437,7 @@ func (a *App) ToggleWindow() {
 	a.windowMu.Lock()
 	visible := a.windowVisible
 	a.windowMu.Unlock()
+	a.logger.Info("toggle window", "currentlyVisible", visible)
 	if visible {
 		a.HideWindow()
 	} else {

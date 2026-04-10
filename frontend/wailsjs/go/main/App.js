@@ -10,6 +10,10 @@ export function AddIgnoredFolder(arg1) {
   return window['go']['main']['App']['AddIgnoredFolder'](arg1);
 }
 
+export function EmitEvent(arg1) {
+  return window['go']['main']['App']['EmitEvent'](arg1);
+}
+
 export function GetFolders() {
   return window['go']['main']['App']['GetFolders']();
 }
@@ -18,16 +22,16 @@ export function GetIgnoredFolders() {
   return window['go']['main']['App']['GetIgnoredFolders']();
 }
 
-export function GetSetting(arg1) {
-  return window['go']['main']['App']['GetSetting'](arg1);
-}
-
 export function GetIndexStatus() {
   return window['go']['main']['App']['GetIndexStatus']();
 }
 
 export function GetPreviewClipPath(arg1, arg2) {
   return window['go']['main']['App']['GetPreviewClipPath'](arg1, arg2);
+}
+
+export function GetSetting(arg1) {
+  return window['go']['main']['App']['GetSetting'](arg1);
 }
 
 export function HideWindow() {
@@ -44,6 +48,10 @@ export function OpenFolder(arg1) {
 
 export function PauseIndexing() {
   return window['go']['main']['App']['PauseIndexing']();
+}
+
+export function Quit() {
+  return window['go']['main']['App']['Quit']();
 }
 
 export function ReindexNow() {

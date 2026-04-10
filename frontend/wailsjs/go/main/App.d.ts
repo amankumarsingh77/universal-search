@@ -6,15 +6,17 @@ export function AddFolder(arg1:string):Promise<void>;
 
 export function AddIgnoredFolder(arg1:string):Promise<void>;
 
+export function EmitEvent(arg1:string):Promise<void>;
+
 export function GetFolders():Promise<Array<string>>;
 
 export function GetIgnoredFolders():Promise<Array<string>>;
 
-export function GetSetting(arg1:string):Promise<string>;
-
 export function GetIndexStatus():Promise<main.IndexStatusDTO>;
 
 export function GetPreviewClipPath(arg1:string,arg2:number):Promise<string>;
+
+export function GetSetting(arg1:string):Promise<string>;
 
 export function HideWindow():Promise<void>;
 
@@ -23,6 +25,8 @@ export function OpenFile(arg1:string):Promise<void>;
 export function OpenFolder(arg1:string):Promise<void>;
 
 export function PauseIndexing():Promise<void>;
+
+export function Quit():Promise<void>;
 
 export function ReindexNow():Promise<void>;
 

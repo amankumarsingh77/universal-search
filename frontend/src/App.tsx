@@ -66,6 +66,7 @@ function App() {
             } else {
               OpenFile(selectedResult.filePath);
             }
+            HideWindow();
           }
           break;
 
@@ -98,7 +99,7 @@ function App() {
           results={results}
           selectedIndex={selectedIndex}
           onSelect={setSelectedIndex}
-          onOpen={OpenFile}
+          onOpen={(path) => { OpenFile(path); HideWindow(); }}
         />
         <PreviewPanel result={selectedResult} />
       </div>

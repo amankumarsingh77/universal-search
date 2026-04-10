@@ -35,11 +35,12 @@ export namespace main {
 	    thumbnailPath: string;
 	    startTime: number;
 	    endTime: number;
-	
+	    score: number;
+
 	    static createFrom(source: any = {}) {
 	        return new SearchResultDTO(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.filePath = source["filePath"];
@@ -50,6 +51,7 @@ export namespace main {
 	        this.thumbnailPath = source["thumbnailPath"];
 	        this.startTime = source["startTime"];
 	        this.endTime = source["endTime"];
+	        this.score = source["score"];
 	    }
 	}
 

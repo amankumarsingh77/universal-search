@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"universal-search/internal/desktop"
 	"universal-search/internal/embedder"
@@ -59,6 +60,7 @@ type SearchResultDTO struct {
 	ThumbnailPath string  `json:"thumbnailPath"`
 	StartTime     float64 `json:"startTime"`
 	EndTime       float64 `json:"endTime"`
+	Score         float32 `json:"score"`
 }
 
 // IndexStatusDTO is the JSON-serializable indexing status sent to the frontend.
@@ -268,6 +270,7 @@ func (a *App) Search(query string) ([]SearchResultDTO, error) {
 			ThumbnailPath: r.File.ThumbnailPath,
 			StartTime:     r.StartTime,
 			EndTime:       r.EndTime,
+			Score:         1 - r.Distance/2,
 		}
 	}
 
@@ -433,6 +436,32 @@ func (a *App) GetPreviewClipPath(videoPath string, timestamp float64) (string, e
 		return "", fmt.Errorf("ffmpeg preview clip failed: %w", err)
 	}
 	return clipPath, nil
+}
+
+// GetFilePreview returns up to 8192 bytes of a text/code file's content.
+// Returns an error if the file is binary, unreadable, or not valid UTF-8.
+func (a *App) GetFilePreview(path string) (string, error) {
+	const maxBytes = 8192
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+	buf := make([]byte, maxBytes)
+	n, err := f.Read(buf)
+	if n == 0 {
+		return "", fmt.Errorf("empty file")
+	}
+	buf = buf[:n]
+	for _, b := range buf {
+		if b == 0 {
+			return "", fmt.Errorf("binary file")
+		}
+	}
+	if !utf8.Valid(buf) {
+		return "", fmt.Errorf("invalid UTF-8")
+	}
+	return string(buf), nil
 }
 
 func (a *App) ShowWindow() {

@@ -792,6 +792,17 @@ func TestQueryCache_Eviction_LargeTTL_KeepsEntry(t *testing.T) {
 	}
 }
 
+// TestSearchResult_HasDistanceField verifies the Distance field exists on SearchResult.
+// This is a compile-time check — the test fails to compile if the field is absent.
+func TestSearchResult_HasDistanceField(t *testing.T) {
+	r := SearchResult{
+		Distance: 0.25,
+	}
+	if r.Distance != 0.25 {
+		t.Fatalf("expected Distance 0.25, got %v", r.Distance)
+	}
+}
+
 func TestUpsertFile_UpdatesExisting(t *testing.T) {
 	s, err := NewStore(":memory:", testLogger)
 	if err != nil {

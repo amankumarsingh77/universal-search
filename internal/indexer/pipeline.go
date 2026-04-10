@@ -38,6 +38,8 @@ const (
 	jobSingleFile
 )
 
+const saveInterval = 50
+
 type indexJob struct {
 	typ             jobType
 	folderPath      string
@@ -65,6 +67,8 @@ type Pipeline struct {
 	onJobDone  OnJobDone
 	workerWg   sync.WaitGroup
 	pendingJobs atomic.Int32
+
+	chunksSinceLastSave int // protected by mu
 }
 
 func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder, thumbDir string, logger *slog.Logger, onDone OnJobDone) *Pipeline {
@@ -301,10 +305,6 @@ func (p *Pipeline) processSingleFile(filePath string) {
 }
 
 func (p *Pipeline) indexFile(filePath string) error {
-	if p.embedder == nil {
-		return fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
-	}
-
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return err
@@ -337,6 +337,7 @@ func (p *Pipeline) indexFile(filePath string) error {
 		p.logger.Warn("thumbnail generation failed", "path", filePath, "error", thumbErr)
 	}
 
+	// Phase 1: register file with empty hash — not yet fully indexed.
 	fileID, err := p.store.UpsertFile(store.FileRecord{
 		Path:          filePath,
 		FileType:      string(fileType),
@@ -344,19 +345,26 @@ func (p *Pipeline) indexFile(filePath string) error {
 		SizeBytes:     info.Size(),
 		ModifiedAt:    info.ModTime(),
 		IndexedAt:     time.Now(),
-		ContentHash:   hash,
+		ContentHash:   "",
 		ThumbnailPath: thumbPath,
 	})
 	if err != nil {
 		return err
 	}
 
+	// Delete old vectors/chunks before re-embedding.
 	oldVecIDs, _ := p.store.GetVectorIDsByFileID(fileID)
 	for _, vid := range oldVecIDs {
 		p.index.Delete(vid)
 	}
 	p.store.DeleteChunksByFileID(fileID)
 
+	if p.embedder == nil {
+		return fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
+	}
+
+	// Phase 2: embed all chunks. Track whether all succeed.
+	allSucceeded := true
 	fileName := filepath.Base(filePath)
 	for _, chunk := range chunks {
 		var vec []float32
@@ -371,12 +379,14 @@ func (p *Pipeline) indexFile(filePath string) error {
 
 		if err != nil {
 			p.logger.Warn("embedding failed", "path", filePath, "chunk", chunk.Index, "error", err)
+			allSucceeded = false
 			continue
 		}
 
 		vecID := fmt.Sprintf("f%d-c%d", fileID, chunk.Index)
-		if err := p.index.Add(vecID, vec); err != nil {
-			p.logger.Warn("adding vector failed", "path", filePath, "chunk", chunk.Index, "error", err)
+		if addErr := p.index.Add(vecID, vec); addErr != nil {
+			p.logger.Warn("adding vector failed", "path", filePath, "chunk", chunk.Index, "error", addErr)
+			allSucceeded = false
 			continue
 		}
 
@@ -387,9 +397,31 @@ func (p *Pipeline) indexFile(filePath string) error {
 			EndTime:    chunk.EndTime,
 			ChunkIndex: chunk.Index,
 		})
+
+		// Periodic HNSW save every saveInterval chunks.
+		p.mu.Lock()
+		p.chunksSinceLastSave++
+		shouldSave := p.chunksSinceLastSave >= saveInterval
+		if shouldSave {
+			p.chunksSinceLastSave = 0
+		}
+		p.mu.Unlock()
+		if shouldSave && p.onJobDone != nil {
+			p.onJobDone()
+		}
 	}
 
-	return nil
+	// Phase 3: commit content_hash only if all chunks succeeded.
+	if allSucceeded {
+		if err := p.store.UpdateContentHash(fileID, hash); err != nil {
+			p.logger.Error("failed to update content hash", "path", filePath, "error", err)
+			return err
+		}
+		return nil
+	}
+
+	p.logger.Warn("some chunks failed — content_hash not committed, file will be re-indexed on next startup", "path", filePath)
+	return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
 }
 
 func isQuotaExhaustedError(err error) bool {

@@ -9,7 +9,7 @@ Search by meaning, not filenames. "people on stage" finds your conference videos
 - Semantic search across all your files — text, images, videos, audio, documents
 - Raycast-style floating search window with thumbnail previews
 - Local-first: files never leave your machine (only embedding API calls)
-- Real-time file watching with automatic re-indexing
+- Real-time file watching with automatic re-indexing; crash-safe indexing with atomic HNSW saves and startup reconciliation
 - Video search with timestamp-level precision (30s chunked embedding)
 - Cross-format search — one query searches everything
 - Configurable ignored folders: add/remove folder name patterns to skip during indexing (20 defaults seeded on first launch, e.g. `node_modules`, `.git`, `venv`)

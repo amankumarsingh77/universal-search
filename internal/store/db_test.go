@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -451,6 +452,188 @@ func TestHasAnyExcludedPattern_NonEmptyTable(t *testing.T) {
 	}
 	if !has {
 		t.Fatal("expected true after adding a pattern, got false")
+	}
+}
+
+func TestUpdateContentHash_UpdatesHash(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	id, err := s.UpsertFile(FileRecord{
+		Path: "/tmp/file.txt", FileType: "text", Extension: ".txt",
+		SizeBytes: 512, ModifiedAt: now, IndexedAt: now, ContentHash: "",
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile failed: %v", err)
+	}
+
+	err = s.UpdateContentHash(id, "sha256-deadbeef")
+	if err != nil {
+		t.Fatalf("UpdateContentHash failed: %v", err)
+	}
+
+	got, err := s.GetFileByPath("/tmp/file.txt")
+	if err != nil {
+		t.Fatalf("GetFileByPath failed: %v", err)
+	}
+	if got.ContentHash != "sha256-deadbeef" {
+		t.Fatalf("expected sha256-deadbeef, got %s", got.ContentHash)
+	}
+}
+
+func TestUpdateContentHash_NonExistentID_ReturnsNil(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.UpdateContentHash(99999, "some-hash")
+	if err != nil {
+		t.Fatalf("expected nil error for non-existent ID, got: %v", err)
+	}
+}
+
+func TestGetAllChunks_EmptyDB(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	chunks, err := s.GetAllChunks()
+	if err != nil {
+		t.Fatalf("GetAllChunks failed: %v", err)
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("expected empty slice, got %d chunks", len(chunks))
+	}
+}
+
+func TestGetAllChunks_Returns6Chunks(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	fileID1, _ := s.UpsertFile(FileRecord{
+		Path: "/tmp/file1.mp4", FileType: "video", Extension: ".mp4",
+		SizeBytes: 1024, ModifiedAt: now, IndexedAt: now,
+	})
+	fileID2, _ := s.UpsertFile(FileRecord{
+		Path: "/tmp/file2.mp4", FileType: "video", Extension: ".mp4",
+		SizeBytes: 2048, ModifiedAt: now, IndexedAt: now,
+	})
+
+	for i := 0; i < 3; i++ {
+		s.InsertChunk(ChunkRecord{FileID: fileID1, VectorID: fmt.Sprintf("vec-f1-%d", i), ChunkIndex: i})
+		s.InsertChunk(ChunkRecord{FileID: fileID2, VectorID: fmt.Sprintf("vec-f2-%d", i), ChunkIndex: i})
+	}
+
+	chunks, err := s.GetAllChunks()
+	if err != nil {
+		t.Fatalf("GetAllChunks failed: %v", err)
+	}
+	if len(chunks) != 6 {
+		t.Fatalf("expected 6 chunks, got %d", len(chunks))
+	}
+
+	// Verify each chunk has correct file_id and vector_id set.
+	for _, c := range chunks {
+		if c.FileID != fileID1 && c.FileID != fileID2 {
+			t.Fatalf("unexpected file_id %d", c.FileID)
+		}
+		if c.VectorID == "" {
+			t.Fatal("expected non-empty vector_id")
+		}
+	}
+}
+
+func TestGetFileByID_ReturnsCorrectRecord(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now().Truncate(time.Second)
+	id, err := s.UpsertFile(FileRecord{
+		Path: "/tmp/byid.pdf", FileType: "text", Extension: ".pdf",
+		SizeBytes: 4096, ModifiedAt: now, IndexedAt: now, ContentHash: "hash-xyz",
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile failed: %v", err)
+	}
+
+	got, err := s.GetFileByID(id)
+	if err != nil {
+		t.Fatalf("GetFileByID failed: %v", err)
+	}
+	if got.Path != "/tmp/byid.pdf" {
+		t.Fatalf("expected /tmp/byid.pdf, got %s", got.Path)
+	}
+	if got.ContentHash != "hash-xyz" {
+		t.Fatalf("expected hash-xyz, got %s", got.ContentHash)
+	}
+	if got.ID != id {
+		t.Fatalf("expected ID %d, got %d", id, got.ID)
+	}
+}
+
+func TestGetFileByID_NonExistent_ReturnsError(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	_, err = s.GetFileByID(99999)
+	if err == nil {
+		t.Fatal("expected error for non-existent ID, got nil")
+	}
+}
+
+func TestGetAllFiles_Returns3Files(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	paths := []string{"/tmp/a.txt", "/tmp/b.txt", "/tmp/c.txt"}
+	for _, p := range paths {
+		_, err := s.UpsertFile(FileRecord{
+			Path: p, FileType: "text", Extension: ".txt",
+			SizeBytes: 100, ModifiedAt: now, IndexedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFile failed for %s: %v", p, err)
+		}
+	}
+
+	files, err := s.GetAllFiles()
+	if err != nil {
+		t.Fatalf("GetAllFiles failed: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("expected 3 files, got %d", len(files))
+	}
+
+	got := make(map[string]bool)
+	for _, f := range files {
+		got[f.Path] = true
+	}
+	for _, p := range paths {
+		if !got[p] {
+			t.Fatalf("expected path %s in results", p)
+		}
 	}
 }
 

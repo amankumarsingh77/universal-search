@@ -449,6 +449,75 @@ func (s *Store) HasAnyExcludedPattern() (bool, error) {
 	return count > 0, nil
 }
 
+// UpdateContentHash updates the content_hash field for a file by ID.
+// It is used in the two-phase commit pattern: the file is inserted first with an
+// empty hash, then the hash is set after the content has been fully processed.
+// If no row matches the given ID, the function returns nil (0 rows affected is acceptable).
+func (s *Store) UpdateContentHash(fileID int64, hash string) error {
+	_, err := s.db.Exec(`UPDATE files SET content_hash = ? WHERE id = ?`, hash, fileID)
+	if err != nil {
+		return fmt.Errorf("update content hash: %w", err)
+	}
+	return nil
+}
+
+// GetAllChunks returns every chunk record in the database.
+// It is used by the reconciliation pass to detect orphaned vector entries.
+func (s *Store) GetAllChunks() ([]ChunkRecord, error) {
+	rows, err := s.db.Query(`SELECT id, file_id, vector_id, chunk_index, start_time, end_time FROM chunks`)
+	if err != nil {
+		return nil, fmt.Errorf("get all chunks: %w", err)
+	}
+	defer rows.Close()
+	var chunks []ChunkRecord
+	for rows.Next() {
+		var c ChunkRecord
+		if err := rows.Scan(&c.ID, &c.FileID, &c.VectorID, &c.ChunkIndex, &c.StartTime, &c.EndTime); err != nil {
+			return nil, fmt.Errorf("scan chunk: %w", err)
+		}
+		chunks = append(chunks, c)
+	}
+	return chunks, rows.Err()
+}
+
+// GetFileByID retrieves a file record by its primary key.
+// It is needed by the reconciliation pass to look up a file path from a chunk's file_id.
+func (s *Store) GetFileByID(id int64) (FileRecord, error) {
+	var f FileRecord
+	err := s.db.QueryRow(`
+		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		FROM files WHERE id = ?
+	`, id).Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
+		&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath)
+	if err != nil {
+		return f, fmt.Errorf("get file by id: %w", err)
+	}
+	return f, nil
+}
+
+// GetAllFiles returns every file record in the database.
+// It is used by the startup rescan to detect and remove files that no longer exist on disk.
+func (s *Store) GetAllFiles() ([]FileRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		FROM files
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("get all files: %w", err)
+	}
+	defer rows.Close()
+	var files []FileRecord
+	for rows.Next() {
+		var f FileRecord
+		if err := rows.Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
+			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath); err != nil {
+			return nil, fmt.Errorf("scan file: %w", err)
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
+}
+
 // GetExcludedPatterns returns all excluded glob patterns.
 func (s *Store) GetExcludedPatterns() ([]string, error) {
 	rows, err := s.db.Query(`SELECT pattern FROM excluded_patterns`)

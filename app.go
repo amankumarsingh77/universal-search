@@ -166,6 +166,17 @@ func (a *App) startup(ctx context.Context) {
 		log.Warn("global hotkey unavailable", "error", err)
 	}
 
+	// Crash-recovery passes — run in background, non-blocking.
+	go a.pipeline.ReconcileIndex()
+	go func() {
+		folders, err := a.store.GetIndexedFolders()
+		if err != nil {
+			a.logger.WithGroup("app").Warn("could not load folders for startup rescan", "error", err)
+			return
+		}
+		a.pipeline.StartupRescan(folders)
+	}()
+
 	// Background goroutines.
 	go a.watchEvents(eventCh)
 	go a.startWatchingFolders()

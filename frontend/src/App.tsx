@@ -7,7 +7,7 @@ import { FolderManager } from './components/FolderManager';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
-import { OpenFile, OpenFolder, HideWindow } from '../wailsjs/go/main/App';
+import { OpenFile, OpenFolder, HideWindow, GetFolders } from '../wailsjs/go/main/App';
 
 function App() {
   const {
@@ -22,6 +22,11 @@ function App() {
   const indexingStatus = useIndexingStatus();
 
   const [showFolderManager, setShowFolderManager] = useState(false);
+  const [hasFolders, setHasFolders] = useState(true);
+
+  useEffect(() => {
+    GetFolders().then(folders => setHasFolders(folders.length > 0));
+  }, []);
 
   useEffect(() => {
     const _cancel = EventsOn('open-folder-manager', () => {
@@ -46,6 +51,14 @@ function App() {
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'C') {
+        e.preventDefault();
+        if (results[selectedIndex]) {
+          navigator.clipboard.writeText(results[selectedIndex].filePath);
+        }
+        return;
+      }
+
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
@@ -79,7 +92,7 @@ function App() {
           break;
       }
     },
-    [results.length, selectedResult, query, setQuery, setSelectedIndex]
+    [results, selectedIndex, selectedResult, query, setQuery, setSelectedIndex]
   );
 
   useEffect(() => {
@@ -100,8 +113,11 @@ function App() {
           selectedIndex={selectedIndex}
           onSelect={setSelectedIndex}
           onOpen={(path) => { OpenFile(path); HideWindow(); }}
+          hasFolders={hasFolders}
+          query={query}
+          onAddFolder={() => setShowFolderManager(true)}
         />
-        <PreviewPanel result={selectedResult} />
+        <PreviewPanel result={selectedResult} onOpenFolder={(path) => { OpenFolder(path); HideWindow(); }} />
       </div>
       <IndexingBar status={indexingStatus} />
       {showFolderManager && (

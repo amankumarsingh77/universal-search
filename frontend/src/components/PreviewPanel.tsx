@@ -8,6 +8,7 @@ import { AudioPreview } from './previews/AudioPreview';
 
 interface PreviewPanelProps {
   result: SearchResultDTO | null;
+  onOpenFolder: (path: string) => void;
 }
 
 function getDirectoryPath(filePath: string): string {
@@ -26,7 +27,7 @@ function renderPreview(result: SearchResultDTO) {
       return <AudioPreview result={result} />;
     case 'text':
     case 'code':
-      return <TextPreview result={result} />;
+      return <TextPreview filePath={result.filePath} />;
     default:
       return (
         <div style={styles.genericPreview}>
@@ -37,7 +38,7 @@ function renderPreview(result: SearchResultDTO) {
   }
 }
 
-export function PreviewPanel({ result }: PreviewPanelProps) {
+export function PreviewPanel({ result, onOpenFolder }: PreviewPanelProps) {
   if (!result) {
     return (
       <div style={styles.container}>
@@ -76,6 +77,15 @@ export function PreviewPanel({ result }: PreviewPanelProps) {
         <span style={styles.shortcut}>
           <kbd style={styles.kbd}>{modKey}+Enter</kbd> Open folder
         </span>
+        <span style={styles.shortcut}>
+          <kbd style={styles.kbd}>{modKey}⇧C</kbd> Copy path
+        </span>
+        <button
+          onClick={() => result && onOpenFolder(result.filePath)}
+          style={styles.actionBtn}
+        >
+          Open Folder
+        </button>
       </div>
     </div>
   );
@@ -192,6 +202,15 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-surface-2)',
     border: '1px solid var(--border)',
     borderRadius: 'var(--radius-sm)',
+  },
+  actionBtn: {
+    background: 'transparent',
+    border: '1px solid var(--border)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    borderRadius: 4,
+    padding: '4px 10px',
+    fontSize: 12,
   },
   genericPreview: {
     display: 'flex',

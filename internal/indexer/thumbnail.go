@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	_ "golang.org/x/image/webp"
 )
@@ -52,7 +53,19 @@ func generateVideoThumbnail(videoPath, outPath string) error {
 	).Run()
 }
 
+// heicExtensions lists formats that Go's image package cannot decode; we use
+// ffmpeg (already a dependency for video) to convert these to JPEG instead.
+var heicExtensions = map[string]bool{
+	".heic": true,
+	".heif": true,
+}
+
 func generateImageThumbnail(imagePath, outPath string) error {
+	ext := strings.ToLower(filepath.Ext(imagePath))
+	if heicExtensions[ext] {
+		return generateVideoThumbnail(imagePath, outPath)
+	}
+
 	f, err := os.Open(imagePath)
 	if err != nil {
 		return err

@@ -124,9 +124,9 @@ func (h *HotkeyManager) ChangeHotkey(combo string) error {
 // DefaultHotkey returns the platform-appropriate default hotkey string.
 func DefaultHotkey() string {
 	if goruntime.GOOS == "darwin" {
-		return "cmd+space"
+		return "cmd+shift+space"
 	}
-	return "ctrl+space"
+	return "ctrl+shift+space"
 }
 
 // ParseHotkey converts a string like "cmd+space" or "ctrl+shift+a" to a

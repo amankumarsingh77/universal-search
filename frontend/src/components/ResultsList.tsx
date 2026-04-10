@@ -7,9 +7,12 @@ interface ResultsListProps {
   selectedIndex: number;
   onSelect: (index: number) => void;
   onOpen: (filePath: string) => void;
+  hasFolders: boolean;
+  query: string;
+  onAddFolder: () => void;
 }
 
-export function ResultsList({ results, selectedIndex, onSelect, onOpen }: ResultsListProps) {
+export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolders, query, onAddFolder }: ResultsListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemHeight = 56;
 
@@ -29,7 +32,35 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen }: Result
     }
   }, [selectedIndex]);
 
-  if (results.length === 0) {
+  // No results + query non-empty
+  if (query && results.length === 0) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.empty}>
+          <span style={styles.emptyIcon}>🔍</span>
+          <span style={styles.emptyText}>No results for '{query}'</span>
+        </div>
+      </div>
+    );
+  }
+
+  // No query + no folders (first-launch onboarding)
+  if (!query && !hasFolders) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.empty}>
+          <span style={styles.emptyIcon}>📁</span>
+          <span style={styles.emptyText}>No folders indexed yet</span>
+          <button style={styles.addFolderBtn} onClick={onAddFolder}>
+            Add folder
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // No query + has folders
+  if (!query && results.length === 0) {
     return (
       <div style={styles.container}>
         <div style={styles.empty}>
@@ -40,8 +71,14 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen }: Result
     );
   }
 
+  // Results exist
   return (
     <div ref={listRef} style={styles.container}>
+      {query && results.length > 0 && (
+        <div style={styles.resultCount}>
+          Showing {results.length} {results.length === 1 ? 'result' : 'results'}
+        </div>
+      )}
       {results.map((result, index) => (
         <ResultItem
           key={`${result.filePath}-${result.startTime}-${index}`}
@@ -81,5 +118,21 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '13px',
     color: 'var(--text-secondary)',
     textAlign: 'center',
+  },
+  resultCount: {
+    padding: '4px 12px',
+    fontSize: 11,
+    color: 'var(--text-tertiary)',
+    borderBottom: '1px solid var(--border)',
+  },
+  addFolderBtn: {
+    color: 'var(--accent-green)',
+    background: 'transparent',
+    border: '1px solid var(--accent-green)',
+    borderRadius: 4,
+    padding: '4px 10px',
+    cursor: 'pointer',
+    fontSize: 12,
+    marginTop: 8,
   },
 };

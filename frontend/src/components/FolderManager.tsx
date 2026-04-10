@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { GetFolders, RemoveFolder } from '../../wailsjs/go/main/App';
+import { GetFolders, RemoveFolder, AddIgnoredFolder, GetIgnoredFolders, RemoveIgnoredFolder } from '../../wailsjs/go/main/App';
 import { EventsEmit, EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
 interface FolderManagerProps {
@@ -10,9 +10,18 @@ type ConfirmState = {
   path: string;
 } | null;
 
+const DEFAULT_IGNORE_PATTERNS = new Set([
+  'node_modules', '.git', 'venv', '.venv', '__pycache__', '.mypy_cache',
+  'dist', 'build', '.next', '.nuxt', 'out', 'target', '.gradle', '.idea',
+  '.vscode', 'Pods', 'vendor', '.cache', '.sass-cache', 'coverage',
+]);
+
 export function FolderManager({ onClose }: FolderManagerProps) {
   const [folders, setFolders] = useState<string[]>([]);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
+  const [activeTab, setActiveTab] = useState<'indexed' | 'ignored'>('indexed');
+  const [ignoredPatterns, setIgnoredPatterns] = useState<string[]>([]);
+  const [newPattern, setNewPattern] = useState('');
 
   const loadFolders = useCallback(async () => {
     try {
@@ -36,6 +45,19 @@ export function FolderManager({ onClose }: FolderManagerProps) {
     };
   }, [loadFolders]);
 
+  const loadIgnoredPatterns = useCallback(async () => {
+    try {
+      const result = await GetIgnoredFolders();
+      setIgnoredPatterns(result || []);
+    } catch (err) {
+      console.error('Failed to load ignored patterns:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadIgnoredPatterns();
+  }, [loadIgnoredPatterns]);
+
   const handleAddFolder = () => {
     EventsEmit('add-folder-request');
   };
@@ -47,6 +69,27 @@ export function FolderManager({ onClose }: FolderManagerProps) {
       await loadFolders();
     } catch (err) {
       console.error('Failed to remove folder:', err);
+    }
+  };
+
+  const handleAddPattern = async () => {
+    const trimmed = newPattern.trim();
+    if (!trimmed) return;
+    try {
+      await AddIgnoredFolder(trimmed);
+      setNewPattern('');
+      await loadIgnoredPatterns();
+    } catch (err) {
+      console.error('Failed to add pattern:', err);
+    }
+  };
+
+  const handleRemovePattern = async (pattern: string) => {
+    try {
+      await RemoveIgnoredFolder(pattern);
+      await loadIgnoredPatterns();
+    } catch (err) {
+      console.error('Failed to remove pattern:', err);
     }
   };
 
@@ -72,28 +115,69 @@ export function FolderManager({ onClose }: FolderManagerProps) {
     <div style={styles.backdrop} onClick={onClose}>
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
-          <span style={styles.title}>Indexed Folders</span>
+          <span style={styles.title}>Folders</span>
           <button style={styles.closeBtn} onClick={onClose}>&times;</button>
         </div>
 
-        <div style={styles.body}>
-          {folders.length === 0 ? (
-            <div style={styles.empty}>No folders indexed. Add a folder to get started.</div>
-          ) : (
-            folders.map((folder) => (
-              <div key={folder} style={styles.folderRow}>
-                <span style={styles.folderPath}>{folder}</span>
-                <button
-                  style={styles.removeBtn}
-                  onClick={() => setConfirm({ path: folder })}
-                  title="Remove folder"
-                >
-                  &times;
-                </button>
-              </div>
-            ))
-          )}
+        <div style={styles.tabs}>
+          <button
+            style={activeTab === 'indexed' ? styles.tabActive : styles.tab}
+            onClick={() => setActiveTab('indexed')}
+          >
+            Indexed Folders
+          </button>
+          <button
+            style={activeTab === 'ignored' ? styles.tabActive : styles.tab}
+            onClick={() => setActiveTab('ignored')}
+          >
+            Ignored Folders
+          </button>
         </div>
+
+        {activeTab === 'indexed' && (
+          <div style={styles.body}>
+            {folders.length === 0 ? (
+              <div style={styles.empty}>No folders indexed. Add a folder to get started.</div>
+            ) : (
+              folders.map((folder) => (
+                <div key={folder} style={styles.folderRow}>
+                  <span style={styles.folderPath}>{folder}</span>
+                  <button
+                    style={styles.removeBtn}
+                    onClick={() => setConfirm({ path: folder })}
+                    title="Remove folder"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {activeTab === 'ignored' && (
+          <div style={styles.body}>
+            {ignoredPatterns.length === 0 ? (
+              <div style={styles.empty}>No ignore patterns. Add one below.</div>
+            ) : (
+              ignoredPatterns.map((pattern) => (
+                <div key={pattern} style={styles.folderRow}>
+                  <span style={styles.folderPath}>{pattern}</span>
+                  {DEFAULT_IGNORE_PATTERNS.has(pattern) && (
+                    <span style={styles.defaultBadge}>default</span>
+                  )}
+                  <button
+                    style={styles.removeBtn}
+                    onClick={() => handleRemovePattern(pattern)}
+                    title="Remove pattern"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
 
         {confirm && (
           <div style={styles.confirmOverlay}>
@@ -125,11 +209,30 @@ export function FolderManager({ onClose }: FolderManagerProps) {
           </div>
         )}
 
-        <div style={styles.footer}>
-          <button style={styles.addBtn} onClick={handleAddFolder}>
-            + Add Folder
-          </button>
-        </div>
+        {activeTab === 'indexed' && (
+          <div style={styles.footer}>
+            <button style={styles.addBtn} onClick={handleAddFolder}>
+              + Add Folder
+            </button>
+          </div>
+        )}
+        {activeTab === 'ignored' && (
+          <div style={styles.footer}>
+            <div style={styles.addRow}>
+              <input
+                style={styles.patternInput}
+                type="text"
+                placeholder="e.g. node_modules"
+                value={newPattern}
+                onChange={(e) => setNewPattern(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAddPattern()}
+              />
+              <button style={styles.addBtn} onClick={handleAddPattern}>
+                Add
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -179,6 +282,33 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 4px',
     lineHeight: 1,
   },
+  tabs: {
+    display: 'flex',
+    borderBottom: '1px solid var(--border)',
+  },
+  tab: {
+    flex: 1,
+    background: 'none',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    padding: '8px 0',
+    fontSize: '13px',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-sans)',
+  } as React.CSSProperties,
+  tabActive: {
+    flex: 1,
+    background: 'none',
+    border: 'none',
+    borderBottom: '2px solid var(--accent, #7c6fe0)',
+    padding: '8px 0',
+    fontSize: '13px',
+    color: 'var(--text-primary)',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-sans)',
+    fontWeight: 600,
+  } as React.CSSProperties,
   body: {
     flex: 1,
     overflowY: 'auto',
@@ -205,6 +335,15 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
     flex: 1,
+  },
+  defaultBadge: {
+    fontSize: '10px',
+    padding: '1px 5px',
+    borderRadius: '3px',
+    background: 'rgba(124,111,224,0.15)',
+    color: 'var(--text-tertiary)',
+    flexShrink: 0,
+    marginRight: '4px',
   },
   removeBtn: {
     background: 'none',
@@ -270,5 +409,20 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontFamily: 'var(--font-sans)',
     width: '100%',
+  },
+  addRow: {
+    display: 'flex',
+    gap: '6px',
+  },
+  patternInput: {
+    flex: 1,
+    background: 'var(--bg-surface-2, var(--bg-surface))',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-sm, 4px)',
+    color: 'var(--text-primary)',
+    fontSize: '12px',
+    padding: '5px 8px',
+    fontFamily: 'var(--font-mono)',
+    outline: 'none',
   },
 };

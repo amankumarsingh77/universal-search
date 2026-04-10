@@ -4,7 +4,11 @@ import {main} from '../models';
 
 export function AddFolder(arg1:string):Promise<void>;
 
+export function AddIgnoredFolder(arg1:string):Promise<void>;
+
 export function GetFolders():Promise<Array<string>>;
+
+export function GetIgnoredFolders():Promise<Array<string>>;
 
 export function GetSetting(arg1:string):Promise<string>;
 
@@ -23,6 +27,8 @@ export function PauseIndexing():Promise<void>;
 export function ReindexNow():Promise<void>;
 
 export function RemoveFolder(arg1:string,arg2:boolean):Promise<void>;
+
+export function RemoveIgnoredFolder(arg1:string):Promise<void>;
 
 export function ResumeIndexing():Promise<void>;
 

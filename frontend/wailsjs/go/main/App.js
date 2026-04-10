@@ -6,8 +6,16 @@ export function AddFolder(arg1) {
   return window['go']['main']['App']['AddFolder'](arg1);
 }
 
+export function AddIgnoredFolder(arg1) {
+  return window['go']['main']['App']['AddIgnoredFolder'](arg1);
+}
+
 export function GetFolders() {
   return window['go']['main']['App']['GetFolders']();
+}
+
+export function GetIgnoredFolders() {
+  return window['go']['main']['App']['GetIgnoredFolders']();
 }
 
 export function GetSetting(arg1) {
@@ -44,6 +52,10 @@ export function ReindexNow() {
 
 export function RemoveFolder(arg1, arg2) {
   return window['go']['main']['App']['RemoveFolder'](arg1, arg2);
+}
+
+export function RemoveIgnoredFolder(arg1) {
+  return window['go']['main']['App']['RemoveIgnoredFolder'](arg1);
 }
 
 export function ResumeIndexing() {

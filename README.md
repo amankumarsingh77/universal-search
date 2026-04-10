@@ -12,6 +12,7 @@ Search by meaning, not filenames. "people on stage" finds your conference videos
 - Real-time file watching with automatic re-indexing
 - Video search with timestamp-level precision (30s chunked embedding)
 - Cross-format search — one query searches everything
+- Configurable ignored folders: add/remove folder name patterns to skip during indexing (20 defaults seeded on first launch, e.g. `node_modules`, `.git`, `venv`)
 
 ## Supported File Formats
 

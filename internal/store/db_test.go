@@ -350,6 +350,110 @@ func TestGetSettingEmptyValue(t *testing.T) {
 	}
 }
 
+func TestRemoveExcludedPattern_ExistingPattern(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.AddExcludedPattern("node_modules")
+	if err != nil {
+		t.Fatalf("AddExcludedPattern failed: %v", err)
+	}
+
+	err = s.RemoveExcludedPattern("node_modules")
+	if err != nil {
+		t.Fatalf("RemoveExcludedPattern failed: %v", err)
+	}
+
+	patterns, err := s.GetExcludedPatterns()
+	if err != nil {
+		t.Fatalf("GetExcludedPatterns failed: %v", err)
+	}
+	for _, p := range patterns {
+		if p == "node_modules" {
+			t.Fatal("expected node_modules to be removed, but it still exists")
+		}
+	}
+}
+
+func TestRemoveExcludedPattern_NonExistentPattern(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.RemoveExcludedPattern("does_not_exist")
+	if err != nil {
+		t.Fatalf("RemoveExcludedPattern on non-existent pattern should return nil, got: %v", err)
+	}
+}
+
+func TestRemoveExcludedPattern_LastPattern(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.AddExcludedPattern(".git")
+	if err != nil {
+		t.Fatalf("AddExcludedPattern failed: %v", err)
+	}
+
+	err = s.RemoveExcludedPattern(".git")
+	if err != nil {
+		t.Fatalf("RemoveExcludedPattern failed: %v", err)
+	}
+
+	patterns, err := s.GetExcludedPatterns()
+	if err != nil {
+		t.Fatalf("GetExcludedPatterns failed: %v", err)
+	}
+	if len(patterns) != 0 {
+		t.Fatalf("expected empty slice after removing last pattern, got %v", patterns)
+	}
+}
+
+func TestHasAnyExcludedPattern_EmptyTable(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	has, err := s.HasAnyExcludedPattern()
+	if err != nil {
+		t.Fatalf("HasAnyExcludedPattern failed: %v", err)
+	}
+	if has {
+		t.Fatal("expected false for empty table, got true")
+	}
+}
+
+func TestHasAnyExcludedPattern_NonEmptyTable(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.AddExcludedPattern("vendor")
+	if err != nil {
+		t.Fatalf("AddExcludedPattern failed: %v", err)
+	}
+
+	has, err := s.HasAnyExcludedPattern()
+	if err != nil {
+		t.Fatalf("HasAnyExcludedPattern failed: %v", err)
+	}
+	if !has {
+		t.Fatal("expected true after adding a pattern, got false")
+	}
+}
+
 func TestUpsertFile_UpdatesExisting(t *testing.T) {
 	s, err := NewStore(":memory:", testLogger)
 	if err != nil {

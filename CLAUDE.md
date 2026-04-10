@@ -24,8 +24,8 @@ Design spec: `docs/superpowers/specs/2026-03-27-universal-search-design.md`
 The app has three main layers:
 
 1. **React frontend** — Raycast-style floating search window with thumbnail-based results list (left) and smart context-aware preview panel (right). Collapsible indexing progress bar at the bottom.
-2. **Go backend** — File watcher, indexing pipeline (classify → extract/chunk → embed via Gemini API → store), search engine (embed query → HNSW cosine search → join metadata), system tray management.
-3. **Storage** — SQLite for file metadata (paths, types, hashes, chunk timestamps, thumbnails). TFMV/hnsw for 768-dim vector embeddings. Separate concerns: SQLite is the source of truth for "what files exist", HNSW is the search index.
+2. **Go backend** — File watcher, indexing pipeline (classify → extract/chunk → embed via Gemini API → store), search engine (embed query → HNSW cosine search → join metadata), system tray management. Key App methods: `GetIgnoredFolders`, `AddIgnoredFolder`, `RemoveIgnoredFolder` (manage excluded folder name patterns); `GetFolders`, `AddFolder`, `RemoveFolder` (manage indexed folders); `GetSetting`/`SetSetting` (key-value settings).
+3. **Storage** — SQLite for file metadata (paths, types, hashes, chunk timestamps, thumbnails), indexed folders, excluded patterns, and key-value settings. TFMV/hnsw for 768-dim vector embeddings. Separate concerns: SQLite is the source of truth for "what files exist", HNSW is the search index. On first launch, 20 default ignore patterns are seeded into the `excluded_patterns` table (e.g. `node_modules`, `.git`, `venv`).
 
 Video pipeline follows sentrysearch patterns: 30s chunks with 5s overlap, 480p/5fps preprocessing, still-frame detection, direct video-to-embedding (no captioning).
 

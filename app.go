@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,12 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+var defaultIgnorePatterns = []string{
+	"node_modules", ".git", "venv", ".venv", "__pycache__", ".mypy_cache",
+	"dist", "build", ".next", ".nuxt", "out", "target", ".gradle", ".idea",
+	".vscode", "Pods", "vendor", ".cache", ".sass-cache", "coverage",
+}
 
 // App struct holds all backend components for the Wails application.
 type App struct {
@@ -100,6 +107,7 @@ func (a *App) startup(ctx context.Context) {
 		log.Error("failed to initialize store", "error", err)
 		return
 	}
+	a.seedDefaultIgnorePatterns()
 
 	indexPath, err := platform.IndexPath()
 	if err != nil {
@@ -441,6 +449,47 @@ func (a *App) SetSetting(key, value string) error {
 		return a.hotkeyMgr.ChangeHotkey(value)
 	}
 	return a.store.SetSetting(key, value)
+}
+
+func (a *App) seedDefaultIgnorePatterns() {
+	has, err := a.store.HasAnyExcludedPattern()
+	if err != nil {
+		a.logger.WithGroup("app").Warn("could not check excluded patterns", "error", err)
+		return
+	}
+	if has {
+		return
+	}
+	for _, p := range defaultIgnorePatterns {
+		if err := a.store.AddExcludedPattern(p); err != nil {
+			a.logger.WithGroup("app").Warn("failed to seed ignore pattern", "pattern", p, "error", err)
+		}
+	}
+	a.logger.WithGroup("app").Info("seeded default ignore patterns", "count", len(defaultIgnorePatterns))
+}
+
+func (a *App) GetIgnoredFolders() ([]string, error) {
+	if a.store == nil {
+		return nil, fmt.Errorf("store not initialized")
+	}
+	return a.store.GetExcludedPatterns()
+}
+
+func (a *App) AddIgnoredFolder(pattern string) error {
+	if a.store == nil {
+		return fmt.Errorf("store not initialized")
+	}
+	if strings.TrimSpace(pattern) == "" {
+		return fmt.Errorf("pattern must not be empty")
+	}
+	return a.store.AddExcludedPattern(strings.TrimSpace(pattern))
+}
+
+func (a *App) RemoveIgnoredFolder(pattern string) error {
+	if a.store == nil {
+		return fmt.Errorf("store not initialized")
+	}
+	return a.store.RemoveExcludedPattern(pattern)
 }
 
 // watchEvents processes file watcher events and queues single-file indexing.

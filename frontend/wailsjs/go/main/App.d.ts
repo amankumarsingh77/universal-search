@@ -36,6 +36,8 @@ export function RemoveIgnoredFolder(arg1:string):Promise<void>;
 
 export function ResumeIndexing():Promise<void>;
 
+export function PreEmbedQuery(arg1:string):Promise<void>;
+
 export function Search(arg1:string):Promise<Array<main.SearchResultDTO>>;
 
 export function SetSetting(arg1:string,arg2:string):Promise<void>;

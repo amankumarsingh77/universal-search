@@ -70,6 +70,10 @@ export function ResumeIndexing() {
   return window['go']['main']['App']['ResumeIndexing']();
 }
 
+export function PreEmbedQuery(arg1) {
+  return window['go']['main']['App']['PreEmbedQuery'](arg1);
+}
+
 export function Search(arg1) {
   return window['go']['main']['App']['Search'](arg1);
 }

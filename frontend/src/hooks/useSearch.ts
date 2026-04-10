@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Search } from '../../wailsjs/go/main/App';
+import { Search, PreEmbedQuery } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
 
 export type SearchResultDTO = main.SearchResultDTO;
@@ -11,6 +11,7 @@ export function useSearch() {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const preEmbedRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchSeqRef = useRef(0);
 
   const performSearch = useCallback(async (q: string) => {
@@ -47,6 +48,15 @@ export function useSearch() {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
+    if (preEmbedRef.current) {
+      clearTimeout(preEmbedRef.current);
+    }
+
+    if (query.trim().length >= 3) {
+      preEmbedRef.current = setTimeout(() => {
+        PreEmbedQuery(query).catch(() => {});
+      }, 150);
+    }
 
     debounceRef.current = setTimeout(() => {
       performSearch(query);
@@ -55,6 +65,9 @@ export function useSearch() {
     return () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
+      }
+      if (preEmbedRef.current) {
+        clearTimeout(preEmbedRef.current);
       }
     };
   }, [query, performSearch]);

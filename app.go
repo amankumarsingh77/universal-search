@@ -109,6 +109,12 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.seedDefaultIgnorePatterns()
 
+	go func() {
+		if err := a.store.EvictOldQueryCache(7 * 24 * time.Hour); err != nil {
+			log.Warn("query cache eviction failed", "error", err)
+		}
+	}()
+
 	indexPath, err := platform.IndexPath()
 	if err != nil {
 		log.Error("failed to resolve index path", "error", err)
@@ -227,9 +233,23 @@ func (a *App) Search(query string) ([]SearchResultDTO, error) {
 	}
 
 	a.logger.Info("search query", "query", query)
-	vec, err := a.embedder.EmbedQuery(a.ctx, query)
-	if err != nil {
-		return nil, err
+
+	var vec []float32
+	if a.store != nil {
+		cached, err := a.store.GetQueryCache(query)
+		if err == nil && cached != nil {
+			a.logger.Info("query cache hit", "query", query)
+			vec = cached
+		}
+	}
+
+	if vec == nil {
+		var err error
+		vec, err = a.embedder.EmbedQuery(a.ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		go func() { a.store.SetQueryCache(query, vec) }()
 	}
 
 	results, err := a.engine.SearchByVector(vec, 20)
@@ -451,6 +471,26 @@ func (a *App) EmitEvent(name string) {
 
 func (a *App) Quit() {
 	runtime.Quit(a.ctx)
+}
+
+// PreEmbedQuery speculatively embeds the query and caches the result.
+// Called by the frontend while the user types. Errors are swallowed — best-effort.
+func (a *App) PreEmbedQuery(query string) {
+	if a.embedder == nil || a.store == nil {
+		return
+	}
+	cached, err := a.store.GetQueryCache(query)
+	if err != nil || cached != nil {
+		return
+	}
+	vec, err := a.embedder.EmbedQuery(a.ctx, query)
+	if err != nil {
+		a.logger.Debug("pre-embed failed", "query", query, "error", err)
+		return
+	}
+	if err := a.store.SetQueryCache(query, vec); err != nil {
+		a.logger.Debug("pre-embed cache write failed", "query", query, "error", err)
+	}
 }
 
 func (a *App) GetSetting(key string) string {

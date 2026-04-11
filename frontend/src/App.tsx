@@ -4,6 +4,8 @@ import { ResultsList } from './components/ResultsList';
 import { PreviewPanel } from './components/PreviewPanel';
 import { IndexingBar } from './components/IndexingBar';
 import { FolderManager } from './components/FolderManager';
+import ApiKeyDialog from './components/ApiKeyDialog';
+import Toast from './components/Toast';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
@@ -23,6 +25,8 @@ function App() {
 
   const [showFolderManager, setShowFolderManager] = useState(false);
   const [hasFolders, setHasFolders] = useState(true);
+  const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     GetFolders().then(folders => setHasFolders(folders.length > 0));
@@ -34,6 +38,15 @@ function App() {
     });
     return () => {
       EventsOff('open-folder-manager');
+    };
+  }, []);
+
+  useEffect(() => {
+    const _cancel = EventsOn('open-api-key-dialog', () => {
+      setShowApiKeyDialog(true);
+    });
+    return () => {
+      EventsOff('open-api-key-dialog');
     };
   }, []);
 
@@ -122,6 +135,20 @@ function App() {
       <IndexingBar status={indexingStatus} />
       {showFolderManager && (
         <FolderManager onClose={() => setShowFolderManager(false)} />
+      )}
+      {showApiKeyDialog && (
+        <ApiKeyDialog
+          onClose={() => setShowApiKeyDialog(false)}
+          onSuccess={() => setToast({ message: 'Gemini client initialized successfully', type: 'success' })}
+          onError={(msg) => setToast({ message: msg, type: 'error' })}
+        />
+      )}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDismiss={() => setToast(null)}
+        />
       )}
     </div>
   );

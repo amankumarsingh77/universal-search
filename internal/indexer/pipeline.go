@@ -544,6 +544,7 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 			StartTime:  chunk.StartTime,
 			EndTime:    chunk.EndTime,
 			ChunkIndex: chunk.Index,
+			VectorBlob: store.VecToBlob(vec),
 		})
 
 		// Periodic HNSW save every saveInterval chunks.

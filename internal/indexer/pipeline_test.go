@@ -1068,3 +1068,101 @@ func TestProcessFolder_IndexesAllFilesInline(t *testing.T) {
 		t.Fatalf("expected %d EmbedBatch calls (one per file), got %d", numFiles, calls)
 	}
 }
+
+// TestIndexer_WritesVectorBlob — Phase 3
+// After indexing a text file, every chunk in the store must have a non-nil
+// VectorBlob whose length matches 4 bytes × number of dimensions returned by
+// the mock embedder (3 dims → 12 bytes per chunk).
+func TestIndexer_WritesVectorBlob(t *testing.T) {
+	mock := &mockEmbedder{}
+	p, s, _ := newTestPipelineWithMock(t, mock, nil, 1)
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "blob_test.txt")
+	content := strings.Repeat("Some content for vector blob test. ", 20)
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.indexFile(filePath, true); err != nil {
+		t.Fatalf("indexFile returned error: %v", err)
+	}
+
+	chunks, err := s.GetAllChunks()
+	if err != nil {
+		t.Fatalf("GetAllChunks: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("expected at least one chunk after indexing")
+	}
+
+	// Mock embedder returns []float32{float32(i), 0.1, 0.2} — 3 dims → 12 bytes.
+	const mockDims = 3
+	const expectedBlobLen = mockDims * 4
+
+	for _, c := range chunks {
+		if len(c.VectorBlob) == 0 {
+			t.Fatalf("chunk %d has empty VectorBlob; expected %d bytes", c.ChunkIndex, expectedBlobLen)
+		}
+		if len(c.VectorBlob) != expectedBlobLen {
+			t.Fatalf("chunk %d VectorBlob len=%d, want %d", c.ChunkIndex, len(c.VectorBlob), expectedBlobLen)
+		}
+	}
+}
+
+// TestIndexer_VectorBlobMatchesEmbedding — Phase 3
+// Decoded VectorBlob bytes must round-trip back to the original float32 slice
+// produced by the mock embedder.
+func TestIndexer_VectorBlobMatchesEmbedding(t *testing.T) {
+	mock := &mockEmbedder{}
+	p, s, _ := newTestPipelineWithMock(t, mock, nil, 1)
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "roundtrip_test.txt")
+	// Single chunk of content so we know exactly which embedding was stored.
+	content := "a single chunk of content for round-trip test"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.indexFile(filePath, true); err != nil {
+		t.Fatalf("indexFile returned error: %v", err)
+	}
+
+	chunks, err := s.GetAllChunks()
+	if err != nil {
+		t.Fatalf("GetAllChunks: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("expected chunks after indexing")
+	}
+
+	// The first chunk (index 0) has embedding []float32{0.0, 0.1, 0.2}.
+	var firstChunk store.ChunkRecord
+	for _, c := range chunks {
+		if c.ChunkIndex == 0 {
+			firstChunk = c
+			break
+		}
+	}
+	if len(firstChunk.VectorBlob) == 0 {
+		t.Fatal("first chunk has empty VectorBlob")
+	}
+
+	// Decode the blob back to float32 using little-endian.
+	decoded, err := store.BlobToVec(firstChunk.VectorBlob)
+	if err != nil {
+		t.Fatalf("BlobToVec: %v", err)
+	}
+
+	// Mock returns []float32{float32(0), 0.1, 0.2} for chunk index 0.
+	expected := []float32{0.0, 0.1, 0.2}
+	if len(decoded) != len(expected) {
+		t.Fatalf("decoded len=%d, want %d", len(decoded), len(expected))
+	}
+	for i, want := range expected {
+		if decoded[i] != want {
+			t.Fatalf("decoded[%d]=%v, want %v", i, decoded[i], want)
+		}
+	}
+}

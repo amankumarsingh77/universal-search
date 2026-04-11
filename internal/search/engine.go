@@ -1,24 +1,41 @@
 package search
 
 import (
+	"context"
 	"log/slog"
 	"time"
 
+	"universal-search/internal/query"
 	"universal-search/internal/store"
 	"universal-search/internal/vectorstore"
 )
 
+// SearchWithSpecResult is the return value of Engine.SearchWithSpec.
+type SearchWithSpecResult struct {
+	Results          []store.SearchResult
+	Strategy         string
+	PlannerCount     int
+	RelaxationBanner string // non-empty if a filter was dropped during relaxation
+}
+
 // Engine performs semantic search by combining vector similarity search
 // with SQLite metadata lookups.
 type Engine struct {
-	store  *store.Store
-	index  *vectorstore.Index
-	logger *slog.Logger
+	store   *store.Store
+	index   *vectorstore.Index
+	logger  *slog.Logger
+	planner *Planner
 }
 
 // New creates a new search engine backed by the given store and vector index.
 func New(s *store.Store, idx *vectorstore.Index, logger *slog.Logger) *Engine {
-	return &Engine{store: s, index: idx, logger: logger.WithGroup("search")}
+	planner := NewPlanner(s, idx, DefaultBruteForceThreshold)
+	return &Engine{store: s, index: idx, logger: logger.WithGroup("search"), planner: planner}
+}
+
+// NewWithPlanner creates a new Engine with an explicit Planner (used in tests).
+func NewWithPlanner(s *store.Store, idx *vectorstore.Index, logger *slog.Logger, p *Planner) *Engine {
+	return &Engine{store: s, index: idx, logger: logger.WithGroup("search"), planner: p}
 }
 
 // SearchByVector searches the HNSW index for the nearest neighbors to
@@ -102,4 +119,51 @@ func (e *Engine) SearchByVector(queryVec []float32, k int) ([]store.SearchResult
 
 	e.logger.Info("search completed", "results", len(deduped), "candidates", len(vecResults), "duration", time.Since(start))
 	return deduped, nil
+}
+
+// SearchWithSpec is the NL-query entry point. It routes through the Planner,
+// applies zero-result relaxation if needed, reranks, and merges with filename
+// matches. Filename matching runs after the planner on the same connection to
+// avoid SQLite in-memory isolation issues across connections.
+func (e *Engine) SearchWithSpec(queryVec []float32, spec query.FilterSpec, rawQuery string, k int) (SearchWithSpecResult, error) {
+	start := time.Now()
+
+	// 1. Run planner.
+	results, strategy, plannerCount, err := e.planner.Plan(queryVec, spec, k)
+	if err != nil {
+		e.logger.Error("planner failed", "error", err, "strategy", strategy)
+		return SearchWithSpecResult{Strategy: strategy, PlannerCount: plannerCount}, err
+	}
+
+	// 2. If zero results and has filters, try relaxation.
+	var droppedDesc string
+	if len(results) == 0 && (len(spec.Must) > 0 || len(spec.MustNot) > 0) {
+		results, droppedDesc, err = RelaxationLadder(context.Background(), e.planner, queryVec, spec, k)
+		if err != nil {
+			return SearchWithSpecResult{Strategy: strategy, PlannerCount: plannerCount}, err
+		}
+	}
+
+	// 3. Rerank.
+	results = Rerank(results, spec)
+
+	// 4. Run filename match and merge.
+	filenameResults := FilenameMatch(context.Background(), e.store, rawQuery)
+	results = MergeWithFilenameResults(results, filenameResults, rawQuery, k)
+
+	e.logger.Info("SearchWithSpec completed",
+		"strategy", strategy,
+		"plannerCount", plannerCount,
+		"results", len(results),
+		"rawQuery", rawQuery,
+		"relaxationBanner", droppedDesc,
+		"duration", time.Since(start),
+	)
+
+	return SearchWithSpecResult{
+		Results:          results,
+		Strategy:         strategy,
+		PlannerCount:     plannerCount,
+		RelaxationBanner: droppedDesc,
+	}, nil
 }

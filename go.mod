@@ -4,10 +4,12 @@ go 1.26.0
 
 require (
 	github.com/TFMV/hnsw v0.4.0
+	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de
 	github.com/energye/systray v1.0.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/joho/godotenv v1.5.1
 	github.com/ncruces/go-sqlite3 v0.33.0
+	github.com/olebedev/when v1.1.0
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/xuri/excelize/v2 v2.10.1
 	golang.design/x/hotkey v0.4.1
@@ -22,6 +24,7 @@ require (
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.5.2 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
+	github.com/AlekSi/pointer v1.0.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/chewxy/math32 v1.10.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect

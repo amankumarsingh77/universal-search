@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"universal-search/internal/query"
 	"universal-search/internal/store"
 	"universal-search/internal/vectorstore"
 )
@@ -237,13 +238,56 @@ func TestEngine_SearchEmptyIndex(t *testing.T) {
 
 	engine := New(db, idx, testLogger)
 
-	query := make([]float32, 768)
-	query[0] = 1.0
-	results, err := engine.SearchByVector(query, 5)
+	queryVec := make([]float32, 768)
+	queryVec[0] = 1.0
+	results, err := engine.SearchByVector(queryVec, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(results) != 0 {
 		t.Fatalf("expected 0 results from empty index, got %d", len(results))
+	}
+}
+
+// TestEngine_SearchWithSpec_EmptySpec verifies that a nil/empty spec falls back to HNSW semantic path.
+func TestEngine_SearchWithSpec_EmptySpec(t *testing.T) {
+	db, err := store.NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	idx := vectorstore.NewIndex(testLogger)
+
+	fileID, err := db.UpsertFile(store.FileRecord{
+		Path: "/tmp/test-spec.txt", FileType: "text", Extension: ".txt", SizeBytes: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.InsertChunk(store.ChunkRecord{FileID: fileID, VectorID: "vec-spec-1", ChunkIndex: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vec := make([]float32, 768)
+	vec[0] = 1.0
+	if err := idx.Add("vec-spec-1", vec); err != nil {
+		t.Fatal(err)
+	}
+
+	planner := NewPlanner(db, idx, DefaultBruteForceThreshold)
+	engine := NewWithPlanner(db, idx, testLogger, planner)
+
+	queryVec := make([]float32, 768)
+	queryVec[0] = 1.0
+	// Empty spec — no Must/MustNot → semantic path
+	res, err := engine.SearchWithSpec(queryVec, query.FilterSpec{}, "", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Strategy != "semantic" {
+		t.Errorf("expected strategy=semantic for empty spec, got %q", res.Strategy)
+	}
+	if len(res.Results) == 0 {
+		t.Errorf("expected results, got none")
 	}
 }

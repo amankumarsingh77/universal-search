@@ -212,6 +212,11 @@ func (e *Embedder) Limiter() *RateLimiter {
 	return e.limiter
 }
 
+// Client returns the underlying genai.Client used by the embedder.
+func (e *Embedder) Client() *genai.Client {
+	return e.client
+}
+
 // EmbedQuery embeds a search query using the inline instruction format
 // required by gemini-embedding-2-preview.
 func (e *Embedder) EmbedQuery(ctx context.Context, query string) ([]float32, error) {

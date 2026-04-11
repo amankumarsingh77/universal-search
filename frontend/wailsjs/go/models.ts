@@ -1,5 +1,25 @@
 export namespace main {
 	
+	export class ChipDTO {
+	    label: string;
+	    field: string;
+	    op: string;
+	    value: string;
+	    clauseKey: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ChipDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.label = source["label"];
+	        this.field = source["field"];
+	        this.op = source["op"];
+	        this.value = source["value"];
+	        this.clauseKey = source["clauseKey"];
+	    }
+	}
 	export class IndexStatusDTO {
 	    totalFiles: number;
 	    indexedFiles: number;
@@ -25,6 +45,44 @@ export namespace main {
 	        this.quotaPaused = source["quotaPaused"];
 	        this.quotaResumeAt = source["quotaResumeAt"];
 	    }
+	}
+	export class ParseQueryResult {
+	    chips: ChipDTO[];
+	    semanticQuery: string;
+	    hasFilters: boolean;
+	    cacheHit: boolean;
+	    isOffline: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ParseQueryResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.chips = this.convertValues(source["chips"], ChipDTO);
+	        this.semanticQuery = source["semanticQuery"];
+	        this.hasFilters = source["hasFilters"];
+	        this.cacheHit = source["cacheHit"];
+	        this.isOffline = source["isOffline"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class SearchResultDTO {
 	    filePath: string;
@@ -53,6 +111,38 @@ export namespace main {
 	        this.endTime = source["endTime"];
 	        this.score = source["score"];
 	    }
+	}
+	export class SearchWithFiltersResult {
+	    results: SearchResultDTO[];
+	    relaxationBanner?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchWithFiltersResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.results = this.convertValues(source["results"], SearchResultDTO);
+	        this.relaxationBanner = source["relaxationBanner"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

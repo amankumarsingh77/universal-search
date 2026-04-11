@@ -10,8 +10,16 @@ export function AddIgnoredFolder(arg1) {
   return window['go']['main']['App']['AddIgnoredFolder'](arg1);
 }
 
+export function DetectMissingVectorBlobs() {
+  return window['go']['main']['App']['DetectMissingVectorBlobs']();
+}
+
 export function EmitEvent(arg1) {
   return window['go']['main']['App']['EmitEvent'](arg1);
+}
+
+export function GetDebugStats() {
+  return window['go']['main']['App']['GetDebugStats']();
 }
 
 export function GetFilePreview(arg1) {
@@ -38,6 +46,10 @@ export function GetIndexStatus() {
   return window['go']['main']['App']['GetIndexStatus']();
 }
 
+export function GetNLQueryEnabled() {
+  return window['go']['main']['App']['GetNLQueryEnabled']();
+}
+
 export function GetOnboarded() {
   return window['go']['main']['App']['GetOnboarded']();
 }
@@ -58,12 +70,20 @@ export function MarkOnboarded() {
   return window['go']['main']['App']['MarkOnboarded']();
 }
 
+export function NeedsReindex() {
+  return window['go']['main']['App']['NeedsReindex']();
+}
+
 export function OpenFile(arg1) {
   return window['go']['main']['App']['OpenFile'](arg1);
 }
 
 export function OpenFolder(arg1) {
   return window['go']['main']['App']['OpenFolder'](arg1);
+}
+
+export function ParseQuery(arg1) {
+  return window['go']['main']['App']['ParseQuery'](arg1);
 }
 
 export function PauseIndexing() {
@@ -102,8 +122,16 @@ export function Search(arg1) {
   return window['go']['main']['App']['Search'](arg1);
 }
 
+export function SearchWithFilters(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SearchWithFilters'](arg1, arg2, arg3);
+}
+
 export function SetGeminiAPIKey(arg1) {
   return window['go']['main']['App']['SetGeminiAPIKey'](arg1);
+}
+
+export function SetNLQueryEnabled(arg1) {
+  return window['go']['main']['App']['SetNLQueryEnabled'](arg1);
 }
 
 export function SetSetting(arg1, arg2) {

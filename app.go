@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"universal-search/internal/indexer"
 	"universal-search/internal/logger"
 	"universal-search/internal/platform"
+	"universal-search/internal/query"
 	"universal-search/internal/search"
 	"universal-search/internal/store"
 	"universal-search/internal/vectorstore"
@@ -31,6 +33,34 @@ var defaultIgnorePatterns = []string{
 	"node_modules", ".git", "venv", ".venv", "__pycache__", ".mypy_cache",
 	"dist", "build", ".next", ".nuxt", "out", "target", ".gradle", ".idea",
 	".vscode", "Pods", "vendor", ".cache", ".sass-cache", "coverage",
+}
+
+// QueryStats tracks LLM call latency and cache hit/miss counts for observability.
+type QueryStats struct {
+	mu           sync.Mutex
+	LLMCallCount int64
+	LLMTotalMs   int64
+	CacheHits    int64
+	CacheMisses  int64
+}
+
+func (s *QueryStats) recordLLMCall(ms int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.LLMCallCount++
+	s.LLMTotalMs += ms
+}
+
+func (s *QueryStats) recordCacheHit() {
+	s.mu.Lock()
+	s.CacheHits++
+	s.mu.Unlock()
+}
+
+func (s *QueryStats) recordCacheMiss() {
+	s.mu.Lock()
+	s.CacheMisses++
+	s.mu.Unlock()
 }
 
 // App struct holds all backend components for the Wails application.
@@ -48,11 +78,18 @@ type App struct {
 	hotkeyMgr     *desktop.HotkeyManager
 	trayIcon      []byte
 	windowMu      sync.Mutex
-	apiKeyMu      sync.Mutex  // serialises concurrent SetGeminiAPIKey calls
+	apiKeyMu      sync.Mutex // serialises concurrent SetGeminiAPIKey calls
 	windowVisible bool
 
 	saveTimerMu sync.Mutex
 	saveTimer   *time.Timer
+
+	// NL query understanding (Phase 6)
+	parsedQueryCache *query.ParsedQueryCache
+	llmParser        *query.LLMParser
+
+	// Observability (Phase 8)
+	queryStats *QueryStats
 }
 
 // SearchResultDTO is the JSON-serializable search result sent to the frontend.
@@ -66,6 +103,30 @@ type SearchResultDTO struct {
 	StartTime     float64 `json:"startTime"`
 	EndTime       float64 `json:"endTime"`
 	Score         float32 `json:"score"`
+}
+
+// ChipDTO represents a single parsed query filter chip for the frontend.
+type ChipDTO struct {
+	Label     string `json:"label"`
+	Field     string `json:"field"`
+	Op        string `json:"op"`
+	Value     string `json:"value"`     // human-readable string representation
+	ClauseKey string `json:"clauseKey"` // serialized "field|op|value" for denylist
+}
+
+// ParseQueryResult is the result of parsing a query into structured filters.
+type ParseQueryResult struct {
+	Chips         []ChipDTO `json:"chips"`
+	SemanticQuery string    `json:"semanticQuery"`
+	HasFilters    bool      `json:"hasFilters"`
+	CacheHit      bool      `json:"cacheHit"`
+	IsOffline     bool      `json:"isOffline"`
+}
+
+// SearchWithFiltersResult wraps search results with an optional relaxation banner.
+type SearchWithFiltersResult struct {
+	Results          []SearchResultDTO `json:"results"`
+	RelaxationBanner string            `json:"relaxationBanner,omitempty"`
 }
 
 // IndexStatusDTO is the JSON-serializable indexing status sent to the frontend.
@@ -82,7 +143,9 @@ type IndexStatusDTO struct {
 
 // NewApp creates a new App application struct.
 func NewApp() *App {
-	return &App{}
+	return &App{
+		queryStats: &QueryStats{},
+	}
 }
 
 // startup is called when the Wails app starts. It initialises all backend
@@ -120,6 +183,9 @@ func (a *App) startup(ctx context.Context) {
 		if err := a.store.EvictOldQueryCache(7 * 24 * time.Hour); err != nil {
 			log.Warn("query cache eviction failed", "error", err)
 		}
+		if err := a.store.EvictOldParsedQueryCache(); err != nil {
+			log.Warn("failed to evict old parsed query cache", "error", err)
+		}
 	}()
 
 	indexPath, err := platform.IndexPath()
@@ -148,6 +214,12 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.engine = search.New(a.store, a.index, a.logger)
+
+	// Wire NL query understanding components.
+	a.parsedQueryCache = query.NewParsedQueryCache(a.store)
+	if a.embedder != nil {
+		a.llmParser = query.NewLLMParser(a.embedder.Client(), a.embedder.Limiter())
+	}
 
 	// Check ffmpeg/ffprobe availability for video processing.
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
@@ -538,6 +610,17 @@ func (a *App) GetFilePreview(path string) (string, error) {
 	return string(buf), nil
 }
 
+// DetectMissingVectorBlobs returns true if any indexed chunks are missing vector data.
+// Called by frontend on startup to determine if re-indexing is needed.
+func (a *App) DetectMissingVectorBlobs() bool {
+	has, err := a.store.HasMissingVectorBlobs()
+	if err != nil {
+		a.logger.Warn("failed to check for missing vector blobs", "error", err)
+		return false
+	}
+	return has
+}
+
 func (a *App) ShowWindow() {
 	a.windowMu.Lock()
 	defer a.windowMu.Unlock()
@@ -770,5 +853,503 @@ func (a *App) emitStatusLoop() {
 		case <-a.ctx.Done():
 			return
 		}
+	}
+}
+
+// isNLQueryEnabled returns true unless nl_query_enabled is explicitly set to "false".
+func (a *App) isNLQueryEnabled() bool {
+	if a.store == nil {
+		return true
+	}
+	val, _ := a.store.GetSetting("nl_query_enabled", "true")
+	return val != "false"
+}
+
+// isOfflineMode returns true if no Gemini API key is available (embedder not initialised).
+// It checks the environment variable first, then the settings table.
+func (a *App) isOfflineMode() bool {
+	if os.Getenv("GEMINI_API_KEY") != "" {
+		return false
+	}
+	if a.store == nil {
+		return true
+	}
+	apiKey, err := a.store.GetSetting("gemini_api_key", "")
+	if err != nil || apiKey == "" {
+		return true
+	}
+	return false
+}
+
+// getBruteForceThreshold returns the configured brute_force_threshold setting,
+// falling back to DefaultBruteForceThreshold if unset or invalid.
+func (a *App) getBruteForceThreshold() int {
+	if a.store == nil {
+		return search.DefaultBruteForceThreshold
+	}
+	val, err := a.store.GetSetting("brute_force_threshold", "")
+	if err != nil || val == "" {
+		return search.DefaultBruteForceThreshold
+	}
+	n, err := strconv.Atoi(val)
+	if err != nil || n <= 0 {
+		return search.DefaultBruteForceThreshold
+	}
+	return n
+}
+
+// GetDebugStats returns LLM call counts, average latency, and cache hit/miss stats.
+func (a *App) GetDebugStats() map[string]any {
+	if a.queryStats == nil {
+		return map[string]any{
+			"llm_call_count": int64(0),
+			"llm_avg_ms":     int64(0),
+			"cache_hits":     int64(0),
+			"cache_misses":   int64(0),
+		}
+	}
+	a.queryStats.mu.Lock()
+	defer a.queryStats.mu.Unlock()
+
+	avgMs := int64(0)
+	if a.queryStats.LLMCallCount > 0 {
+		avgMs = a.queryStats.LLMTotalMs / a.queryStats.LLMCallCount
+	}
+
+	return map[string]any{
+		"llm_call_count": a.queryStats.LLMCallCount,
+		"llm_avg_ms":     avgMs,
+		"cache_hits":     a.queryStats.CacheHits,
+		"cache_misses":   a.queryStats.CacheMisses,
+	}
+}
+
+// NeedsReindex returns true if chunks are missing vector_blob data (upgrade scenario).
+// Called by frontend on startup to decide whether to show the re-index modal.
+func (a *App) NeedsReindex() bool {
+	return a.DetectMissingVectorBlobs()
+}
+
+// GetNLQueryEnabled returns the current nl_query_enabled setting.
+func (a *App) GetNLQueryEnabled() bool {
+	return a.isNLQueryEnabled()
+}
+
+// SetNLQueryEnabled sets the nl_query_enabled setting.
+func (a *App) SetNLQueryEnabled(enabled bool) error {
+	if a.store == nil {
+		return fmt.Errorf("store not initialized")
+	}
+	val := "false"
+	if enabled {
+		val = "true"
+	}
+	return a.store.SetSetting("nl_query_enabled", val)
+}
+
+// ParseQuery parses a raw query string into structured filter chips.
+// It runs a grammar parse always, checks the cache, and conditionally invokes
+// the LLM parser if the residual query warrants it.
+// When offline (no API key), LLM parse is skipped and IsOffline is set to true.
+func (a *App) ParseQuery(raw string) (ParseQueryResult, error) {
+	if !a.isNLQueryEnabled() {
+		return ParseQueryResult{}, nil
+	}
+
+	offline := a.isOfflineMode()
+
+	// Grammar parse — always, no network.
+	grammarSpec := query.Parse(raw)
+
+	// Check cache before LLM.
+	var mergedSpec query.FilterSpec
+	cacheHit := false
+	if a.parsedQueryCache != nil {
+		if cached, err := a.parsedQueryCache.Get(raw); err == nil && cached != nil {
+			mergedSpec = *cached
+			cacheHit = true
+		}
+	}
+
+	if !cacheHit {
+		if a.queryStats != nil {
+			a.queryStats.recordCacheMiss()
+		}
+		llmSpec := grammarSpec
+		// Skip LLM when offline.
+		if !offline && query.ShouldInvokeLLM(grammarSpec.SemanticQuery) && a.llmParser != nil && a.ctx != nil {
+			ctx, cancel := context.WithTimeout(a.ctx, 500*time.Millisecond)
+			defer cancel()
+			llmStart := time.Now()
+			parsed, err := a.llmParser.Parse(ctx, raw, grammarSpec)
+			if a.queryStats != nil {
+				a.queryStats.recordLLMCall(time.Since(llmStart).Milliseconds())
+			}
+			if err == nil {
+				llmSpec = parsed
+			}
+		}
+		mergedSpec = query.Merge(grammarSpec, llmSpec, nil)
+		if a.parsedQueryCache != nil {
+			_ = a.parsedQueryCache.Set(raw, mergedSpec)
+		}
+	} else {
+		if a.queryStats != nil {
+			a.queryStats.recordCacheHit()
+		}
+	}
+
+	chips := buildChipDTOs(mergedSpec)
+
+	return ParseQueryResult{
+		Chips:         chips,
+		SemanticQuery: mergedSpec.SemanticQuery,
+		HasFilters:    len(mergedSpec.Must)+len(mergedSpec.MustNot)+len(mergedSpec.Should) > 0,
+		CacheHit:      cacheHit,
+		IsOffline:     offline,
+	}, nil
+}
+
+// SearchWithFilters runs a search using the parsed FilterSpec, applying a
+// denylist to remove chips the user has dismissed.
+// When offline (no API key), it falls back to filename-contains search.
+// If the vector search returns a network error, it falls back to filename search for that query.
+func (a *App) SearchWithFilters(raw string, semanticQuery string, denyList []string) (SearchWithFiltersResult, error) {
+	start := time.Now()
+
+	if !a.isNLQueryEnabled() {
+		results, err := a.Search(raw)
+		return SearchWithFiltersResult{Results: results}, err
+	}
+
+	// Offline mode: skip embedding entirely, use filename search.
+	isOffline := a.isOfflineMode()
+	if isOffline {
+		return a.searchFilenameOnly(raw)
+	}
+
+	// Get current FilterSpec (from cache or grammar).
+	grammarSpec := query.Parse(raw)
+	grammarFilterCount := len(grammarSpec.Must) + len(grammarSpec.MustNot) + len(grammarSpec.Should)
+
+	var mergedSpec query.FilterSpec
+	cacheHit := false
+	if a.parsedQueryCache != nil {
+		if cached, err := a.parsedQueryCache.Get(raw); err == nil && cached != nil {
+			mergedSpec = *cached
+			cacheHit = true
+		} else {
+			mergedSpec = grammarSpec
+		}
+	} else {
+		mergedSpec = grammarSpec
+	}
+
+	llmFilterCount := len(mergedSpec.Must) + len(mergedSpec.MustNot) + len(mergedSpec.Should)
+
+	// Apply denylist.
+	denyClauseKeys := parseDenyList(denyList)
+	mergedSpec = query.Merge(mergedSpec, query.FilterSpec{}, denyClauseKeys)
+
+	// Override semantic query if provided.
+	if semanticQuery != "" {
+		mergedSpec.SemanticQuery = semanticQuery
+	}
+
+	// Embed the semantic query.
+	queryText := mergedSpec.SemanticQuery
+	if queryText == "" {
+		queryText = raw
+	}
+	if queryText == "" {
+		return SearchWithFiltersResult{}, nil
+	}
+
+	queryVec, err := a.getQueryVector(queryText)
+	if err != nil {
+		return SearchWithFiltersResult{}, err
+	}
+
+	// Run SearchWithSpec; on network errors fall back to filename search.
+	searchResult, err := a.engine.SearchWithSpec(queryVec, mergedSpec, raw, 20)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "network") ||
+			strings.Contains(strings.ToLower(err.Error()), "embed") {
+			a.logger.Warn("vector search failed, falling back to filename search", "error", err)
+			return a.searchFilenameOnly(queryText)
+		}
+		return SearchWithFiltersResult{}, err
+	}
+
+	dtos := make([]SearchResultDTO, 0, len(searchResult.Results))
+	for _, r := range searchResult.Results {
+		dtos = append(dtos, toSearchResultDTO(r))
+	}
+
+	a.logger.Debug("query pipeline complete",
+		"raw", raw,
+		"grammar_filter_count", grammarFilterCount,
+		"llm_filter_count", llmFilterCount,
+		"chosen_strategy", searchResult.Strategy,
+		"planner_count", searchResult.PlannerCount,
+		"final_result_count", len(dtos),
+		"latency_ms", time.Since(start).Milliseconds(),
+		"cache_hit", cacheHit,
+		"offline", isOffline,
+	)
+
+	return SearchWithFiltersResult{
+		Results:          dtos,
+		RelaxationBanner: searchResult.RelaxationBanner,
+	}, nil
+}
+
+// searchFilenameOnly runs a filename-contains search and returns results as DTOs.
+func (a *App) searchFilenameOnly(queryText string) (SearchWithFiltersResult, error) {
+	if a.store == nil || queryText == "" {
+		return SearchWithFiltersResult{}, nil
+	}
+	files, err := a.store.SearchFilenameContains(queryText)
+	if err != nil {
+		return SearchWithFiltersResult{}, err
+	}
+	dtos := make([]SearchResultDTO, 0, len(files))
+	for _, f := range files {
+		dtos = append(dtos, SearchResultDTO{
+			FilePath:      f.Path,
+			FileName:      filepath.Base(f.Path),
+			FileType:      f.FileType,
+			Extension:     f.Extension,
+			SizeBytes:     f.SizeBytes,
+			ThumbnailPath: f.ThumbnailPath,
+			Score:         0,
+		})
+	}
+	return SearchWithFiltersResult{Results: dtos}, nil
+}
+
+// getQueryVector embeds the query and caches the result.
+func (a *App) getQueryVector(queryText string) ([]float32, error) {
+	if a.embedder == nil {
+		return nil, fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
+	}
+
+	if a.store != nil {
+		cached, err := a.store.GetQueryCache(queryText)
+		if err == nil && cached != nil {
+			return cached, nil
+		}
+	}
+
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	vec, err := a.embedder.EmbedQuery(ctx, queryText)
+	if err != nil {
+		return nil, err
+	}
+	if a.store != nil {
+		go func() { a.store.SetQueryCache(queryText, vec) }()
+	}
+	return vec, nil
+}
+
+// toSearchResultDTO converts a store.SearchResult to a SearchResultDTO.
+func toSearchResultDTO(r store.SearchResult) SearchResultDTO {
+	return SearchResultDTO{
+		FilePath:      r.File.Path,
+		FileName:      filepath.Base(r.File.Path),
+		FileType:      r.File.FileType,
+		Extension:     r.File.Extension,
+		SizeBytes:     r.File.SizeBytes,
+		ThumbnailPath: r.File.ThumbnailPath,
+		StartTime:     r.StartTime,
+		EndTime:       r.EndTime,
+		Score:         1 - r.Distance/2,
+	}
+}
+
+// parseDenyList converts a slice of "field|op|value" strings into ClauseKey values.
+func parseDenyList(denyList []string) []query.ClauseKey {
+	if len(denyList) == 0 {
+		return nil
+	}
+	keys := make([]query.ClauseKey, 0, len(denyList))
+	for _, s := range denyList {
+		parts := strings.SplitN(s, "|", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		keys = append(keys, query.ClauseKey{
+			Field: query.FieldEnum(parts[0]),
+			Op:    query.Op(parts[1]),
+			Value: parts[2],
+		})
+	}
+	return keys
+}
+
+// buildChipDTOs converts a FilterSpec into a slice of ChipDTO values for the frontend.
+func buildChipDTOs(spec query.FilterSpec) []ChipDTO {
+	var chips []ChipDTO
+	for _, c := range spec.Must {
+		if chip, ok := clauseToChip(c, false); ok {
+			chips = append(chips, chip)
+		}
+	}
+	for _, c := range spec.MustNot {
+		if chip, ok := clauseToChip(c, true); ok {
+			chips = append(chips, chip)
+		}
+	}
+	for _, c := range spec.Should {
+		if chip, ok := clauseToChip(c, false); ok {
+			chips = append(chips, chip)
+		}
+	}
+	return chips
+}
+
+// clauseToChip converts a single Clause to a ChipDTO with a human-readable label.
+func clauseToChip(c query.Clause, negate bool) (ChipDTO, bool) {
+	var label, valueStr string
+
+	switch c.Field {
+	case query.FieldFileType:
+		s, ok := c.Value.(string)
+		if !ok {
+			return ChipDTO{}, false
+		}
+		valueStr = s
+		label = fileTypeLabel(s)
+
+	case query.FieldExtension:
+		switch v := c.Value.(type) {
+		case string:
+			valueStr = v
+			label = v
+		case []string:
+			valueStr = strings.Join(v, ",")
+			label = strings.Join(v, ", ")
+		default:
+			return ChipDTO{}, false
+		}
+
+	case query.FieldSizeBytes:
+		var bytes int64
+		switch v := c.Value.(type) {
+		case int64:
+			bytes = v
+		case int:
+			bytes = int64(v)
+		default:
+			return ChipDTO{}, false
+		}
+		valueStr = fmt.Sprintf("%d", bytes)
+		opStr := opSymbol(c.Op)
+		label = fmt.Sprintf("%s %s", opStr, formatBytes(bytes))
+
+	case query.FieldModifiedAt:
+		t, ok := c.Value.(time.Time)
+		if !ok {
+			return ChipDTO{}, false
+		}
+		valueStr = t.Format("2006-01-02")
+		switch c.Op {
+		case query.OpGte, query.OpGt:
+			label = "Since " + t.Format("Jan 2")
+		case query.OpLte, query.OpLt:
+			label = "Before " + t.Format("Jan 2")
+		default:
+			label = t.Format("Jan 2")
+		}
+
+	case query.FieldPath:
+		s, ok := c.Value.(string)
+		if !ok {
+			return ChipDTO{}, false
+		}
+		valueStr = s
+		label = "Path: " + s
+
+	default:
+		s, ok := c.Value.(string)
+		if !ok {
+			return ChipDTO{}, false
+		}
+		valueStr = s
+		label = s
+	}
+
+	if negate {
+		label = "Not " + label
+	}
+
+	clauseKey := fmt.Sprintf("%s|%s|%s", c.Field, c.Op, valueStr)
+
+	return ChipDTO{
+		Label:     label,
+		Field:     string(c.Field),
+		Op:        string(c.Op),
+		Value:     valueStr,
+		ClauseKey: clauseKey,
+	}, true
+}
+
+// fileTypeLabel returns a human-readable label for a file_type value.
+func fileTypeLabel(ft string) string {
+	switch ft {
+	case "image":
+		return "Images"
+	case "video":
+		return "Videos"
+	case "audio":
+		return "Audio"
+	case "document":
+		return "Documents"
+	case "text":
+		return "Text"
+	default:
+		return strings.Title(ft) //nolint:staticcheck
+	}
+}
+
+// opSymbol returns a human-readable operator symbol.
+func opSymbol(op query.Op) string {
+	switch op {
+	case query.OpGt:
+		return ">"
+	case query.OpGte:
+		return ">="
+	case query.OpLt:
+		return "<"
+	case query.OpLte:
+		return "<="
+	case query.OpEq:
+		return "="
+	case query.OpNeq:
+		return "!="
+	default:
+		return string(op)
+	}
+}
+
+// formatBytes formats a byte count as a human-readable size string.
+func formatBytes(b int64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+	switch {
+	case b >= GB:
+		return fmt.Sprintf("%d GB", b/GB)
+	case b >= MB:
+		return fmt.Sprintf("%d MB", b/MB)
+	case b >= KB:
+		return fmt.Sprintf("%d KB", b/KB)
+	default:
+		return fmt.Sprintf("%d B", b)
 	}
 }

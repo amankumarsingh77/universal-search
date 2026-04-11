@@ -50,10 +50,19 @@ type indexJob struct {
 
 type OnJobDone func()
 
+// embIface is the subset of embedder.Embedder used by the pipeline.
+// Extracted as an interface so tests can inject a mock.
+type embIface interface {
+	EmbedDocumentWithTitle(ctx context.Context, title, text string) ([]float32, error)
+	EmbedBytes(ctx context.Context, data []byte, mimeType, title string) ([]float32, error)
+	EmbedBatch(ctx context.Context, chunks []embedder.ChunkInput) ([][]float32, error)
+}
+
 type Pipeline struct {
 	store    *store.Store
 	index    *vectorstore.Index
 	embedder *embedder.Embedder
+	mockEmb  embIface // non-nil in tests; takes priority over embedder
 	thumbDir string
 	logger   *slog.Logger
 
@@ -65,11 +74,12 @@ type Pipeline struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 
-	jobCh      chan indexJob
-	onJobDone  OnJobDone
-	workerWg   sync.WaitGroup
+	jobCh       chan indexJob
+	onJobDone   OnJobDone
+	workerWg    sync.WaitGroup
 	pendingJobs atomic.Int32
 	generation  atomic.Int32
+	workerCount int
 
 	chunksSinceLastSave int // protected by mu
 }
@@ -77,21 +87,25 @@ type Pipeline struct {
 func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder, thumbDir string, logger *slog.Logger, onDone OnJobDone) *Pipeline {
 	ctx, cancel := context.WithCancel(context.Background())
 	log := logger.WithGroup("indexer")
-	log.Info("pipeline created", "thumbDir", thumbDir)
+	workerCount := 4
+	log.Info("pipeline created", "thumbDir", thumbDir, "workers", workerCount)
 	p := &Pipeline{
-		store:     s,
-		index:     idx,
-		embedder:  emb,
-		thumbDir:  thumbDir,
-		logger:    log,
-		pauseCh:   make(chan struct{}, 1),
-		ctx:       ctx,
-		cancel:    cancel,
-		jobCh:     make(chan indexJob, 64),
-		onJobDone: onDone,
+		store:       s,
+		index:       idx,
+		embedder:    emb,
+		thumbDir:    thumbDir,
+		logger:      log,
+		pauseCh:     make(chan struct{}, 1),
+		ctx:         ctx,
+		cancel:      cancel,
+		jobCh:       make(chan indexJob, 64),
+		onJobDone:   onDone,
+		workerCount: workerCount,
 	}
-	p.workerWg.Add(1)
-	go p.worker()
+	for i := 0; i < workerCount; i++ {
+		p.workerWg.Add(1)
+		go p.worker()
+	}
 	return p
 }
 
@@ -101,6 +115,21 @@ func (p *Pipeline) SetEmbedder(e *embedder.Embedder) {
 	p.embedderMu.Lock()
 	p.embedder = e
 	p.embedderMu.Unlock()
+}
+
+// getEmbedder returns the active embedder interface. In tests, mockEmb takes priority.
+// Returns nil if no embedder is configured.
+func (p *Pipeline) getEmbedder() embIface {
+	if p.mockEmb != nil {
+		return p.mockEmb
+	}
+	p.embedderMu.RLock()
+	e := p.embedder
+	p.embedderMu.RUnlock()
+	if e == nil {
+		return nil
+	}
+	return e
 }
 
 func (p *Pipeline) Status() IndexStatus {
@@ -284,44 +313,13 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string, fo
 		default:
 		}
 
-		p.waitIfPaused()
-
-		p.mu.Lock()
-		p.status.CurrentFile = filePath
-		p.mu.Unlock()
-
-		if err := p.indexFile(filePath, force); err != nil {
-			p.logger.Warn("file indexing failed", "path", filePath, "error", err)
-			p.mu.Lock()
-			p.status.FailedFiles++
-			if isQuotaExhaustedError(err) {
-				p.status.QuotaPaused = true
-				p.status.QuotaResumeAt = time.Now().Add(30 * time.Minute).Format(time.RFC3339)
-				p.logger.Error("all API keys exhausted, pausing indexing", "resumeAt", p.status.QuotaResumeAt)
-			}
-			p.mu.Unlock()
-
-			if isQuotaExhaustedError(err) {
-				p.waitForQuotaRecovery()
-			}
-		} else {
-			p.mu.Lock()
-			p.status.IndexedFiles++
-			p.mu.Unlock()
-		}
+		// Push each file as an individual job; workers will process them.
+		p.SubmitFile(filePath)
 	}
 
-	p.mu.RLock()
-	indexed := p.status.IndexedFiles
-	failed := p.status.FailedFiles
-	total := p.status.TotalFiles
-	p.mu.RUnlock()
-
-	p.logger.Info("folder indexing complete",
+	p.logger.Info("folder jobs submitted",
 		"folder", folderPath,
-		"indexed", indexed,
-		"failed", failed,
-		"total", total,
+		"files", len(files),
 		"duration", time.Since(start),
 	)
 }
@@ -402,33 +400,63 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 	}
 	p.store.DeleteChunksByFileID(fileID)
 
-	p.embedderMu.RLock()
-	emb := p.embedder
-	p.embedderMu.RUnlock()
+	emb := p.getEmbedder()
 	if emb == nil {
 		return fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
 	}
 
-	// Phase 2: embed all chunks. Track whether all succeed.
-	allSucceeded := true
+	// Phase 2: build batch inputs from all chunks.
 	fileName := filepath.Base(filePath)
+	batchInputs := make([]embedder.ChunkInput, 0, len(chunks))
 	for _, chunk := range chunks {
-		var vec []float32
-
 		if chunk.Text != "" {
-			vec, err = emb.EmbedDocumentWithTitle(p.ctx, fileName, chunk.Text)
+			batchInputs = append(batchInputs, embedder.ChunkInput{
+				Title: fileName,
+				Text:  chunk.Text,
+			})
 		} else if len(chunk.Content) > 0 {
-			vec, err = emb.EmbedBytes(p.ctx, chunk.Content, chunk.MimeType, fileName)
+			batchInputs = append(batchInputs, embedder.ChunkInput{
+				Title:    fileName,
+				MIMEType: chunk.MimeType,
+				Data:     chunk.Content,
+			})
 		} else {
-			continue
+			// Empty chunk — include a placeholder so indices stay aligned.
+			batchInputs = append(batchInputs, embedder.ChunkInput{
+				Title: fileName,
+				Text:  " ",
+			})
 		}
+	}
 
-		if err != nil {
-			p.logger.Warn("embedding failed", "path", filePath, "chunk", chunk.Index, "error", err)
-			allSucceeded = false
-			continue
+	// Capture generation before embedding so we can detect stale runs.
+	gen := p.generation.Load()
+
+	vecs, embedErr := emb.EmbedBatch(p.ctx, batchInputs)
+
+	// If generation advanced while we were embedding, discard results (stale run).
+	if p.generation.Load() != gen {
+		p.logger.Info("generation changed mid-batch, discarding results", "path", filePath)
+		return nil
+	}
+
+	if embedErr != nil {
+		if isQuotaExhaustedError(embedErr) {
+			resumeAt := p.quotaResumeTime()
+			p.mu.Lock()
+			p.status.QuotaPaused = true
+			p.status.QuotaResumeAt = resumeAt.Format(time.RFC3339)
+			p.mu.Unlock()
+			p.logger.Warn("quota exhausted, pipeline paused", "resumeAt", resumeAt)
 		}
+		p.logger.Warn("batch embedding failed", "path", filePath, "error", embedErr)
+		return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
+	}
 
+	// Phase 3: write vectors and chunks to store in chunk.Index order.
+	allSucceeded := true
+	for i, vec := range vecs {
+		chunk := chunks[i]
 		vecID := fmt.Sprintf("f%d-c%d", fileID, chunk.Index)
 		if addErr := p.index.Add(vecID, vec); addErr != nil {
 			p.logger.Warn("adding vector failed", "path", filePath, "chunk", chunk.Index, "error", addErr)
@@ -457,7 +485,7 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 		}
 	}
 
-	// Phase 3: commit content_hash only if all chunks succeeded.
+	// Phase 4: commit content_hash only if all chunks stored successfully.
 	if allSucceeded {
 		if err := p.store.UpdateContentHash(fileID, hash); err != nil {
 			p.logger.Error("failed to update content hash", "path", filePath, "error", err)
@@ -468,6 +496,21 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 
 	p.logger.Warn("some chunks failed — content_hash not committed, file will be re-indexed on next startup", "path", filePath)
 	return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
+}
+
+// quotaResumeTime returns the time when the quota pause is expected to expire.
+// It reads from the embedder's rate limiter when available; otherwise falls back
+// to a 30-second default from now.
+func (p *Pipeline) quotaResumeTime() time.Time {
+	p.embedderMu.RLock()
+	emb := p.embedder
+	p.embedderMu.RUnlock()
+	if emb != nil {
+		if t := emb.Limiter().PausedUntil(); !t.IsZero() {
+			return t
+		}
+	}
+	return time.Now().Add(30 * time.Second)
 }
 
 func isQuotaExhaustedError(err error) bool {

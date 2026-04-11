@@ -300,28 +300,33 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string, fo
 
 	gen := p.generation.Load()
 
-	for _, filePath := range files {
-		// Cancel if a new reindex was triggered.
-		if p.generation.Load() != gen {
-			p.logger.Info("reindex generation changed, cancelling in-flight run", "folder", folderPath)
-			return
+	// Submit file jobs from a separate goroutine so this worker is freed to
+	// consume from jobCh. Without this, processFolder would block trying to
+	// push onto a full channel while all workers are waiting for it to return.
+	//
+	// Hold a pendingJobs slot for the submission goroutine itself so IsRunning
+	// stays true until all file jobs have been enqueued.
+	p.pendingJobs.Add(1)
+	go func() {
+		defer p.pendingJobs.Add(-1)
+		for _, filePath := range files {
+			if p.generation.Load() != gen {
+				p.logger.Info("reindex generation changed, cancelling in-flight run", "folder", folderPath)
+				return
+			}
+			select {
+			case <-p.ctx.Done():
+				return
+			default:
+			}
+			p.SubmitFile(filePath)
 		}
-
-		select {
-		case <-p.ctx.Done():
-			return
-		default:
-		}
-
-		// Push each file as an individual job; workers will process them.
-		p.SubmitFile(filePath)
-	}
-
-	p.logger.Info("folder jobs submitted",
-		"folder", folderPath,
-		"files", len(files),
-		"duration", time.Since(start),
-	)
+		p.logger.Info("folder jobs submitted",
+			"folder", folderPath,
+			"files", len(files),
+			"duration", time.Since(start),
+		)
+	}()
 }
 
 func (p *Pipeline) processSingleFile(filePath string) {

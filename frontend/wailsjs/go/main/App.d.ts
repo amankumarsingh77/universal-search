@@ -16,19 +16,19 @@ export function GetHasGeminiKey():Promise<boolean>;
 
 export function GetHotkeyString():Promise<string>;
 
-export function GetOnboarded():Promise<boolean>;
-
-export function MarkOnboarded():Promise<void>;
-
 export function GetIgnoredFolders():Promise<Array<string>>;
 
 export function GetIndexStatus():Promise<main.IndexStatusDTO>;
+
+export function GetOnboarded():Promise<boolean>;
 
 export function GetPreviewClipPath(arg1:string,arg2:number):Promise<string>;
 
 export function GetSetting(arg1:string):Promise<string>;
 
 export function HideWindow():Promise<void>;
+
+export function MarkOnboarded():Promise<void>;
 
 export function OpenFile(arg1:string):Promise<void>;
 
@@ -40,7 +40,7 @@ export function PreEmbedQuery(arg1:string):Promise<void>;
 
 export function Quit():Promise<void>;
 
-export function ReindexFolder(arg1: string): Promise<void>;
+export function ReindexFolder(arg1:string):Promise<void>;
 
 export function ReindexNow():Promise<void>;
 

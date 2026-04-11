@@ -1,6 +1,7 @@
 package vectorstore
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -248,6 +249,22 @@ func TestLoadIndex_IgnoresTmpFiles(t *testing.T) {
 	}
 	if !idx2.Has("id-1") {
 		t.Fatal("loaded index should contain id-1")
+	}
+}
+
+// Regression: adding many vectors must not fail with "no nodes found in
+// neighborhood search". The HNSW elevator node may not exist in lower layers,
+// so the library must fall back to the layer entry point rather than using a
+// nil search point. Adding 200 vectors at 768 dimensions reliably exercises
+// the multi-layer code path.
+func TestVectorIndex_Add_ManyVectors_NoNeighborhoodError(t *testing.T) {
+	idx := NewIndex(testLogger)
+	for i := 0; i < 200; i++ {
+		vec := make([]float32, 768)
+		vec[i%768] = 1.0
+		if err := idx.Add(fmt.Sprintf("id-%d", i), vec); err != nil {
+			t.Fatalf("Add(%d) failed: %v", i, err)
+		}
 	}
 }
 

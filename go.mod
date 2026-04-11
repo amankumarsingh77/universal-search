@@ -70,3 +70,5 @@ require (
 	google.golang.org/grpc v1.69.2 // indirect
 	google.golang.org/protobuf v1.36.1 // indirect
 )
+
+replace github.com/TFMV/hnsw => github.com/amankumarsingh77/hnsw v0.4.1-0.20260411114551-f29a1414598c

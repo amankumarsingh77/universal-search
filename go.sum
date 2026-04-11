@@ -8,8 +8,8 @@ cloud.google.com/go/compute/metadata v0.5.2/go.mod h1:C66sj2AluDcIqakBq/M8lw8/yb
 git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 h1:N3IGoHHp9pb6mj1cbXbuaSXV/UMKwmbKLf53nQmtqMA=
 git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3/go.mod h1:QtOLZGz8olr4qH2vWK0QH0w0O4T9fEIjMuWpKUsH7nc=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/TFMV/hnsw v0.4.0 h1:k61xD3V9LzzwUMDLaHCn+1PbvMbJj33KRdUPiUtuj7k=
-github.com/TFMV/hnsw v0.4.0/go.mod h1:YPCKBOTpl3KzZxYBTVbR+uH7US5HpprYkDLALt/bgTY=
+github.com/amankumarsingh77/hnsw v0.4.1-0.20260411114551-f29a1414598c h1:CkKPk+AxBQYZ2kdLb22pLP1FutdgcEAHYBnt7fJKUhs=
+github.com/amankumarsingh77/hnsw v0.4.1-0.20260411114551-f29a1414598c/go.mod h1:YPCKBOTpl3KzZxYBTVbR+uH7US5HpprYkDLALt/bgTY=
 github.com/bep/debounce v1.2.1 h1:v67fRdBA9UQu2NhLFXrSg0Brw7CexQekrBwDMM8bzeY=
 github.com/bep/debounce v1.2.1/go.mod h1:H8yggRPQKLUhUoqrJC1bO2xNya7vanpDl7xR3ISbCJ0=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=

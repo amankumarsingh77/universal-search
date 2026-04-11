@@ -39,16 +39,18 @@ type ChunkRecord struct {
 	ChunkIndex int
 	StartTime  float64
 	EndTime    float64
+	VectorBlob []byte // optional: raw little-endian float32 vector stored inline
 }
 
 // SearchResult joins chunk and file data for search responses.
 type SearchResult struct {
-	File      FileRecord
-	ChunkID   int64
-	VectorID  string
-	StartTime float64
-	EndTime   float64
-	Distance  float32 // cosine distance from vectorstore (0=identical, 2=opposite)
+	File       FileRecord
+	ChunkID    int64
+	VectorID   string
+	StartTime  float64
+	EndTime    float64
+	Distance   float32 // cosine distance from vectorstore (0=identical, 2=opposite)
+	FinalScore float32 // reranked score (0–1+); set by search.Rerank, 0 if not reranked
 }
 
 const schema = `
@@ -66,6 +68,9 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
 CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash);
+CREATE INDEX IF NOT EXISTS idx_files_type ON files(file_type);
+CREATE INDEX IF NOT EXISTS idx_files_ext ON files(extension);
+CREATE INDEX IF NOT EXISTS idx_files_modified ON files(modified_at);
 
 CREATE TABLE IF NOT EXISTS chunks (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,6 +104,14 @@ CREATE TABLE IF NOT EXISTS query_cache (
 	vector     BLOB NOT NULL,
 	created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS parsed_query_cache (
+	query_text_normalized TEXT PRIMARY KEY,
+	spec_json             TEXT NOT NULL,
+	created_at            INTEGER NOT NULL,
+	last_used_at          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_parsed_query_last_used ON parsed_query_cache(last_used_at);
 `
 
 // NewStore opens the SQLite database at dsn, enables WAL mode and foreign keys,
@@ -128,6 +141,13 @@ func NewStore(dsn string, logger *slog.Logger) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+
+	// Add vector_blob column to chunks if it doesn't exist yet (idempotent).
+	_, err = db.Exec(`ALTER TABLE chunks ADD COLUMN vector_blob BLOB`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		db.Close()
+		return nil, fmt.Errorf("adding vector_blob column: %w", err)
 	}
 
 	log.Info("database ready")
@@ -188,11 +208,17 @@ func (s *Store) GetFileByPath(path string) (FileRecord, error) {
 }
 
 // InsertChunk inserts a new chunk record. Returns the chunk ID.
+// If VectorBlob is set it is stored inline; on conflict the vector_blob is upserted.
 func (s *Store) InsertChunk(c ChunkRecord) (int64, error) {
+	var blob any
+	if len(c.VectorBlob) > 0 {
+		blob = c.VectorBlob
+	}
 	res, err := s.db.Exec(`
-		INSERT INTO chunks (file_id, vector_id, chunk_index, start_time, end_time)
-		VALUES (?, ?, ?, ?, ?)
-	`, c.FileID, c.VectorID, c.ChunkIndex, c.StartTime, c.EndTime)
+		INSERT INTO chunks (file_id, vector_id, chunk_index, start_time, end_time, vector_blob)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(vector_id) DO UPDATE SET vector_blob = excluded.vector_blob
+	`, c.FileID, c.VectorID, c.ChunkIndex, c.StartTime, c.EndTime, blob)
 	if err != nil {
 		return 0, fmt.Errorf("insert chunk: %w", err)
 	}
@@ -470,10 +496,10 @@ func (s *Store) UpdateContentHash(fileID int64, hash string) error {
 	return nil
 }
 
-// GetAllChunks returns every chunk record in the database.
+// GetAllChunks returns every chunk record in the database, including VectorBlob.
 // It is used by the reconciliation pass to detect orphaned vector entries.
 func (s *Store) GetAllChunks() ([]ChunkRecord, error) {
-	rows, err := s.db.Query(`SELECT id, file_id, vector_id, chunk_index, start_time, end_time FROM chunks`)
+	rows, err := s.db.Query(`SELECT id, file_id, vector_id, chunk_index, start_time, end_time, vector_blob FROM chunks`)
 	if err != nil {
 		return nil, fmt.Errorf("get all chunks: %w", err)
 	}
@@ -481,7 +507,7 @@ func (s *Store) GetAllChunks() ([]ChunkRecord, error) {
 	var chunks []ChunkRecord
 	for rows.Next() {
 		var c ChunkRecord
-		if err := rows.Scan(&c.ID, &c.FileID, &c.VectorID, &c.ChunkIndex, &c.StartTime, &c.EndTime); err != nil {
+		if err := rows.Scan(&c.ID, &c.FileID, &c.VectorID, &c.ChunkIndex, &c.StartTime, &c.EndTime, &c.VectorBlob); err != nil {
 			return nil, fmt.Errorf("scan chunk: %w", err)
 		}
 		chunks = append(chunks, c)
@@ -610,13 +636,181 @@ func (s *Store) EvictOldQueryCache(maxAge time.Duration) error {
 	return nil
 }
 
+// CountFiltered returns the number of files matching the given FilterSpec.
+func (s *Store) CountFiltered(spec FilterSpec) (int, error) {
+	where, args, err := buildWhereClause(spec.Must, spec.MustNot)
+	if err != nil {
+		return 0, fmt.Errorf("build where clause: %w", err)
+	}
+
+	query := `SELECT COUNT(*) FROM files`
+	if where != "" {
+		query += " WHERE " + where
+	}
+
+	var count int
+	if err := s.db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count filtered: %w", err)
+	}
+	return count, nil
+}
+
+// FilterFileIDs returns the file IDs matching the given FilterSpec.
+func (s *Store) FilterFileIDs(spec FilterSpec) ([]int64, error) {
+	where, args, err := buildWhereClause(spec.Must, spec.MustNot)
+	if err != nil {
+		return nil, fmt.Errorf("build where clause: %w", err)
+	}
+
+	query := `SELECT id FROM files`
+	if where != "" {
+		query += " WHERE " + where
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("filter file ids: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan file id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// GetVectorBlobs retrieves all stored vector blobs for the given file IDs.
+// Chunks with a NULL vector_blob are skipped. Returns map[fileID][]vectors.
+func (s *Store) GetVectorBlobs(fileIDs []int64) (map[int64][][]float32, error) {
+	if len(fileIDs) == 0 {
+		return nil, nil
+	}
+
+	placeholders := make([]string, len(fileIDs))
+	args := make([]any, len(fileIDs))
+	for i, id := range fileIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	query := fmt.Sprintf(
+		`SELECT file_id, vector_blob FROM chunks WHERE file_id IN (%s) AND vector_blob IS NOT NULL`,
+		strings.Join(placeholders, ","),
+	)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("get vector blobs: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[int64][][]float32)
+	for rows.Next() {
+		var fileID int64
+		var blob []byte
+		if err := rows.Scan(&fileID, &blob); err != nil {
+			return nil, fmt.Errorf("scan vector blob: %w", err)
+		}
+		vec, err := blobToVec(blob)
+		if err != nil {
+			return nil, fmt.Errorf("decode vector blob for file %d: %w", fileID, err)
+		}
+		result[fileID] = append(result[fileID], vec)
+	}
+	return result, rows.Err()
+}
+
+// UpsertParsedQueryCache stores a parsed query spec, keyed by normalized query text.
+func (s *Store) UpsertParsedQueryCache(normalizedQuery, specJSON string) error {
+	now := time.Now().Unix()
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO parsed_query_cache (query_text_normalized, spec_json, created_at, last_used_at)
+		VALUES (?, ?, ?, ?)
+	`, normalizedQuery, specJSON, now, now)
+	if err != nil {
+		return fmt.Errorf("upsert parsed query cache: %w", err)
+	}
+	return nil
+}
+
+// GetParsedQueryCache returns the cached spec JSON for normalizedQuery.
+// Returns "", nil on a cache miss. Updates last_used_at on a hit.
+func (s *Store) GetParsedQueryCache(normalizedQuery string) (string, error) {
+	var specJSON string
+	err := s.db.QueryRow(
+		`SELECT spec_json FROM parsed_query_cache WHERE query_text_normalized = ?`,
+		normalizedQuery,
+	).Scan(&specJSON)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get parsed query cache: %w", err)
+	}
+
+	// Update last_used_at on hit.
+	_, _ = s.db.Exec(
+		`UPDATE parsed_query_cache SET last_used_at = ? WHERE query_text_normalized = ?`,
+		time.Now().Unix(), normalizedQuery,
+	)
+	return specJSON, nil
+}
+
+// EvictOldParsedQueryCache deletes cache entries not used in the last 30 days.
+func (s *Store) EvictOldParsedQueryCache() error {
+	cutoff := time.Now().Add(-30 * 24 * time.Hour).Unix()
+	_, err := s.db.Exec(`DELETE FROM parsed_query_cache WHERE last_used_at < ?`, cutoff)
+	if err != nil {
+		return fmt.Errorf("evict parsed query cache: %w", err)
+	}
+	return nil
+}
+
+// SearchFilenameContains returns up to 50 files whose path contains query as a substring.
+func (s *Store) SearchFilenameContains(query string) ([]FileRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		FROM files WHERE path LIKE '%' || ? || '%' LIMIT 50
+	`, query)
+	if err != nil {
+		return nil, fmt.Errorf("search filename contains: %w", err)
+	}
+	defer rows.Close()
+
+	var files []FileRecord
+	for rows.Next() {
+		var f FileRecord
+		if err := rows.Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
+			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath); err != nil {
+			return nil, fmt.Errorf("scan file: %w", err)
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
+}
+
+// CountFiles returns the total number of files in the database.
+func (s *Store) CountFiles() (int, error) {
+	var count int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM files`).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count files: %w", err)
+	}
+	return count, nil
+}
+
 // normalizeQuery lowercases and trims whitespace from a query string.
 func normalizeQuery(q string) string {
 	return strings.ToLower(strings.TrimSpace(q))
 }
 
-// vecToBlob encodes a float32 slice as a little-endian byte slice.
-func vecToBlob(vec []float32) []byte {
+// VecToBlob encodes a float32 slice as a little-endian byte slice.
+// Exported so the indexer and other packages can encode embeddings for storage.
+func VecToBlob(vec []float32) []byte {
 	buf := make([]byte, len(vec)*4)
 	for i, v := range vec {
 		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(v))
@@ -624,8 +818,12 @@ func vecToBlob(vec []float32) []byte {
 	return buf
 }
 
-// blobToVec decodes a little-endian byte slice into a float32 slice.
-func blobToVec(blob []byte) ([]float32, error) {
+// vecToBlob is an internal alias kept for callers within this package.
+func vecToBlob(vec []float32) []byte { return VecToBlob(vec) }
+
+// BlobToVec decodes a little-endian byte slice into a float32 slice.
+// Exported so the indexer and tests can decode stored vector blobs.
+func BlobToVec(blob []byte) ([]float32, error) {
 	if len(blob)%4 != 0 {
 		return nil, fmt.Errorf("invalid vector blob length %d", len(blob))
 	}
@@ -635,4 +833,17 @@ func blobToVec(blob []byte) ([]float32, error) {
 		vec[i] = math.Float32frombits(bits)
 	}
 	return vec, nil
+}
+
+// blobToVec is an internal alias kept for callers within this package.
+func blobToVec(blob []byte) ([]float32, error) { return BlobToVec(blob) }
+
+// HasMissingVectorBlobs returns true if any chunks row has NULL vector_blob.
+func (s *Store) HasMissingVectorBlobs() (bool, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE vector_blob IS NULL`).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }

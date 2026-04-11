@@ -418,6 +418,69 @@ func TestRemoveExcludedPattern_LastPattern(t *testing.T) {
 	}
 }
 
+// TestHasMissingVectorBlobs_TrueWhenNull — chunk with nil VectorBlob returns true.
+func TestHasMissingVectorBlobs_TrueWhenNull(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	fileID, _ := s.UpsertFile(FileRecord{
+		Path: "/tmp/test.txt", FileType: "text", Extension: ".txt",
+		SizeBytes: 100, ModifiedAt: time.Now(), IndexedAt: time.Now(),
+	})
+
+	// Insert chunk with nil VectorBlob — missing vector data.
+	_, err = s.InsertChunk(ChunkRecord{
+		FileID: fileID, VectorID: "vec-null-1", ChunkIndex: 0,
+		VectorBlob: nil,
+	})
+	if err != nil {
+		t.Fatalf("InsertChunk failed: %v", err)
+	}
+
+	has, err := s.HasMissingVectorBlobs()
+	if err != nil {
+		t.Fatalf("HasMissingVectorBlobs returned error: %v", err)
+	}
+	if !has {
+		t.Fatal("expected HasMissingVectorBlobs to return true when chunk has NULL vector_blob")
+	}
+}
+
+// TestHasMissingVectorBlobs_FalseWhenPresent — all chunks have VectorBlob set, returns false.
+func TestHasMissingVectorBlobs_FalseWhenPresent(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	fileID, _ := s.UpsertFile(FileRecord{
+		Path: "/tmp/test2.txt", FileType: "text", Extension: ".txt",
+		SizeBytes: 100, ModifiedAt: time.Now(), IndexedAt: time.Now(),
+	})
+
+	// Insert chunk with valid VectorBlob.
+	blob := VecToBlob([]float32{0.1, 0.2, 0.3})
+	_, err = s.InsertChunk(ChunkRecord{
+		FileID: fileID, VectorID: "vec-present-1", ChunkIndex: 0,
+		VectorBlob: blob,
+	})
+	if err != nil {
+		t.Fatalf("InsertChunk failed: %v", err)
+	}
+
+	has, err := s.HasMissingVectorBlobs()
+	if err != nil {
+		t.Fatalf("HasMissingVectorBlobs returned error: %v", err)
+	}
+	if has {
+		t.Fatal("expected HasMissingVectorBlobs to return false when all chunks have vector_blob set")
+	}
+}
+
 func TestHasAnyExcludedPattern_EmptyTable(t *testing.T) {
 	s, err := NewStore(":memory:", testLogger)
 	if err != nil {
@@ -790,6 +853,381 @@ func TestQueryCache_Eviction_LargeTTL_KeepsEntry(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected entry to be kept, but it was evicted")
 	}
+}
+
+// --- Phase 1: NL Query Understanding - Schema + Store Layer tests ---
+
+func TestCountFiltered_FileType(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	for i := 0; i < 3; i++ {
+		_, err := s.UpsertFile(FileRecord{
+			Path: fmt.Sprintf("/tmp/img%d.png", i), FileType: "image", Extension: ".png",
+			SizeBytes: 1024, ModifiedAt: now, IndexedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFile image %d failed: %v", i, err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		_, err := s.UpsertFile(FileRecord{
+			Path: fmt.Sprintf("/tmp/doc%d.pdf", i), FileType: "document", Extension: ".pdf",
+			SizeBytes: 2048, ModifiedAt: now, IndexedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFile doc %d failed: %v", i, err)
+		}
+	}
+
+	count, err := s.CountFiltered(FilterSpec{
+		Must: []Clause{{Field: FieldFileType, Op: OpEq, Value: "image"}},
+	})
+	if err != nil {
+		t.Fatalf("CountFiltered failed: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("expected count=3 for image files, got %d", count)
+	}
+}
+
+func TestCountFiltered_DateRange(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Now()
+
+	for i, mt := range []time.Time{old, old, recent, recent, now} {
+		_, err := s.UpsertFile(FileRecord{
+			Path: fmt.Sprintf("/tmp/date%d.txt", i), FileType: "text", Extension: ".txt",
+			SizeBytes: 100, ModifiedAt: mt, IndexedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFile %d failed: %v", i, err)
+		}
+	}
+
+	cutoff := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	count, err := s.CountFiltered(FilterSpec{
+		Must: []Clause{{Field: FieldModifiedAt, Op: OpGte, Value: cutoff.Unix()}},
+	})
+	if err != nil {
+		t.Fatalf("CountFiltered date range failed: %v", err)
+	}
+	if count != 3 {
+		t.Fatalf("expected count=3 for files after 2024, got %d", count)
+	}
+}
+
+func TestFilterFileIDs_ReturnsCorrectIDs(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	var imageIDs []int64
+	for i := 0; i < 2; i++ {
+		id, err := s.UpsertFile(FileRecord{
+			Path: fmt.Sprintf("/tmp/img%d.jpg", i), FileType: "image", Extension: ".jpg",
+			SizeBytes: 512, ModifiedAt: now, IndexedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFile failed: %v", err)
+		}
+		imageIDs = append(imageIDs, id)
+	}
+	for i := 0; i < 3; i++ {
+		_, err := s.UpsertFile(FileRecord{
+			Path: fmt.Sprintf("/tmp/audio%d.mp3", i), FileType: "audio", Extension: ".mp3",
+			SizeBytes: 4096, ModifiedAt: now, IndexedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFile audio failed: %v", err)
+		}
+	}
+
+	ids, err := s.FilterFileIDs(FilterSpec{
+		Must: []Clause{{Field: FieldFileType, Op: OpEq, Value: "image"}},
+	})
+	if err != nil {
+		t.Fatalf("FilterFileIDs failed: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 IDs, got %d: %v", len(ids), ids)
+	}
+	idSet := make(map[int64]bool)
+	for _, id := range ids {
+		idSet[id] = true
+	}
+	for _, expected := range imageIDs {
+		if !idSet[expected] {
+			t.Fatalf("expected ID %d in results, got %v", expected, ids)
+		}
+	}
+}
+
+func TestGetVectorBlobs_RoundTrip(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	fileID, err := s.UpsertFile(FileRecord{
+		Path: "/tmp/vec.txt", FileType: "text", Extension: ".txt",
+		SizeBytes: 100, ModifiedAt: now, IndexedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vec1 := []float32{0.1, 0.2, 0.3}
+	vec2 := []float32{0.4, 0.5, 0.6}
+	_, err = s.InsertChunk(ChunkRecord{
+		FileID: fileID, VectorID: "vec-blob-001", ChunkIndex: 0, VectorBlob: vecToBlob(vec1),
+	})
+	if err != nil {
+		t.Fatalf("InsertChunk with blob failed: %v", err)
+	}
+	_, err = s.InsertChunk(ChunkRecord{
+		FileID: fileID, VectorID: "vec-blob-002", ChunkIndex: 1, VectorBlob: vecToBlob(vec2),
+	})
+	if err != nil {
+		t.Fatalf("InsertChunk with blob 2 failed: %v", err)
+	}
+
+	blobs, err := s.GetVectorBlobs([]int64{fileID})
+	if err != nil {
+		t.Fatalf("GetVectorBlobs failed: %v", err)
+	}
+	vecs, ok := blobs[fileID]
+	if !ok {
+		t.Fatalf("expected fileID %d in result map", fileID)
+	}
+	if len(vecs) != 2 {
+		t.Fatalf("expected 2 vectors for file, got %d", len(vecs))
+	}
+	for i, v := range vecs {
+		if len(v) != 3 {
+			t.Fatalf("vector %d: expected 3 dims, got %d", i, len(v))
+		}
+	}
+}
+
+func TestGetVectorBlobs_SkipsNullBlob(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	fileID, err := s.UpsertFile(FileRecord{
+		Path: "/tmp/noblob.txt", FileType: "text", Extension: ".txt",
+		SizeBytes: 100, ModifiedAt: now, IndexedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert chunk with no VectorBlob (nil/empty)
+	_, err = s.InsertChunk(ChunkRecord{
+		FileID: fileID, VectorID: "vec-noblob-001", ChunkIndex: 0,
+	})
+	if err != nil {
+		t.Fatalf("InsertChunk no-blob failed: %v", err)
+	}
+	// Insert chunk with a blob
+	_, err = s.InsertChunk(ChunkRecord{
+		FileID: fileID, VectorID: "vec-noblob-002", ChunkIndex: 1,
+		VectorBlob: vecToBlob([]float32{1.0, 2.0}),
+	})
+	if err != nil {
+		t.Fatalf("InsertChunk with blob failed: %v", err)
+	}
+
+	blobs, err := s.GetVectorBlobs([]int64{fileID})
+	if err != nil {
+		t.Fatalf("GetVectorBlobs failed: %v", err)
+	}
+	vecs := blobs[fileID]
+	if len(vecs) != 1 {
+		t.Fatalf("expected 1 vector (null blob skipped), got %d", len(vecs))
+	}
+}
+
+func TestUpsertParsedQueryCache_RoundTrip(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	specJSON := `{"semantic_query":"find images","must":[{"field":"file_type","op":"eq","value":"image"}]}`
+	err = s.UpsertParsedQueryCache("find images", specJSON)
+	if err != nil {
+		t.Fatalf("UpsertParsedQueryCache failed: %v", err)
+	}
+
+	got, err := s.GetParsedQueryCache("find images")
+	if err != nil {
+		t.Fatalf("GetParsedQueryCache failed: %v", err)
+	}
+	if got != specJSON {
+		t.Fatalf("expected %q, got %q", specJSON, got)
+	}
+}
+
+func TestUpsertParsedQueryCache_Miss_ReturnsEmpty(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	got, err := s.GetParsedQueryCache("nonexistent query")
+	if err != nil {
+		t.Fatalf("GetParsedQueryCache miss should return nil error, got: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("expected empty string on miss, got %q", got)
+	}
+}
+
+func TestEvictOldParsedQueryCache_LeavesRecent(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Seed 5 old entries by direct SQL
+	oldTS := time.Now().Add(-31 * 24 * time.Hour).Unix()
+	for i := 0; i < 5; i++ {
+		_, err := s.db.Exec(`INSERT INTO parsed_query_cache (query_text_normalized, spec_json, created_at, last_used_at) VALUES (?,?,?,?)`,
+			fmt.Sprintf("old query %d", i), `{}`, oldTS, oldTS)
+		if err != nil {
+			t.Fatalf("insert old entry %d failed: %v", i, err)
+		}
+	}
+
+	// Seed 5 recent entries
+	for i := 0; i < 5; i++ {
+		err := s.UpsertParsedQueryCache(fmt.Sprintf("recent query %d", i), `{}`)
+		if err != nil {
+			t.Fatalf("UpsertParsedQueryCache recent %d failed: %v", i, err)
+		}
+	}
+
+	err = s.EvictOldParsedQueryCache()
+	if err != nil {
+		t.Fatalf("EvictOldParsedQueryCache failed: %v", err)
+	}
+
+	var count int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM parsed_query_cache`).Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 5 {
+		t.Fatalf("expected 5 remaining entries after eviction, got %d", count)
+	}
+}
+
+func TestSearchFilenameContains_FindsMatch(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	paths := []string{
+		"/home/user/documents/report_2025.pdf",
+		"/home/user/pictures/vacation.jpg",
+		"/home/user/documents/annual_report.docx",
+		"/tmp/unrelated.txt",
+	}
+	for _, p := range paths {
+		_, err := s.UpsertFile(FileRecord{
+			Path: p, FileType: "text", Extension: ".txt",
+			SizeBytes: 100, ModifiedAt: now, IndexedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFile %s failed: %v", p, err)
+		}
+	}
+
+	results, err := s.SearchFilenameContains("report")
+	if err != nil {
+		t.Fatalf("SearchFilenameContains failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results containing 'report', got %d: %v", len(results), func() []string {
+			var ps []string
+			for _, r := range results {
+				ps = append(ps, r.Path)
+			}
+			return ps
+		}())
+	}
+}
+
+func TestCountFiles_ReturnsTotal(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	for i := 0; i < 7; i++ {
+		_, err := s.UpsertFile(FileRecord{
+			Path: fmt.Sprintf("/tmp/file%d.txt", i), FileType: "text", Extension: ".txt",
+			SizeBytes: 100, ModifiedAt: now, IndexedAt: now,
+		})
+		if err != nil {
+			t.Fatalf("UpsertFile %d failed: %v", i, err)
+		}
+	}
+
+	count, err := s.CountFiles()
+	if err != nil {
+		t.Fatalf("CountFiles failed: %v", err)
+	}
+	if count != 7 {
+		t.Fatalf("expected 7 files, got %d", count)
+	}
+}
+
+func TestAlterTable_Idempotent(t *testing.T) {
+	// Use a temp file to test idempotency across two NewStore calls
+	dir := t.TempDir()
+	dbPath := dir + "/test.db"
+
+	s1, err := NewStore(dbPath, testLogger)
+	if err != nil {
+		t.Fatalf("first NewStore failed: %v", err)
+	}
+	s1.Close()
+
+	s2, err := NewStore(dbPath, testLogger)
+	if err != nil {
+		t.Fatalf("second NewStore failed (ALTER TABLE not idempotent): %v", err)
+	}
+	s2.Close()
 }
 
 // TestSearchResult_HasDistanceField verifies the Distance field exists on SearchResult.

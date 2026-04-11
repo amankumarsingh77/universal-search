@@ -12,6 +12,14 @@ function getFileName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
+function formatCountdown(resumeAt: string | null): string {
+  if (!resumeAt) return 'shortly';
+  const ms = new Date(resumeAt).getTime() - Date.now();
+  if (ms <= 0) return 'shortly';
+  const secs = Math.ceil(ms / 1000);
+  return `in ${secs}s`;
+}
+
 export function IndexingBar({ status, onDismiss }: IndexingBarProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -53,8 +61,7 @@ export function IndexingBar({ status, onDismiss }: IndexingBarProps) {
             </span>
           ) : status.quotaPaused ? (
             <span style={styles.warningText}>
-              Indexing paused — API quota exhausted
-              {status.quotaResumeAt && `, will retry at ${new Date(status.quotaResumeAt).toLocaleTimeString()}`}
+              Rate limited — resuming {formatCountdown(status.quotaResumeAt || null)}
             </span>
           ) : (
             <span style={styles.statusText}>

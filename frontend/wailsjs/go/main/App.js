@@ -30,20 +30,16 @@ export function GetHotkeyString() {
   return window['go']['main']['App']['GetHotkeyString']();
 }
 
-export function GetOnboarded() {
-  return window['go']['main']['App']['GetOnboarded']();
-}
-
-export function MarkOnboarded() {
-  return window['go']['main']['App']['MarkOnboarded']();
-}
-
 export function GetIgnoredFolders() {
   return window['go']['main']['App']['GetIgnoredFolders']();
 }
 
 export function GetIndexStatus() {
   return window['go']['main']['App']['GetIndexStatus']();
+}
+
+export function GetOnboarded() {
+  return window['go']['main']['App']['GetOnboarded']();
 }
 
 export function GetPreviewClipPath(arg1, arg2) {
@@ -56,6 +52,10 @@ export function GetSetting(arg1) {
 
 export function HideWindow() {
   return window['go']['main']['App']['HideWindow']();
+}
+
+export function MarkOnboarded() {
+  return window['go']['main']['App']['MarkOnboarded']();
 }
 
 export function OpenFile(arg1) {

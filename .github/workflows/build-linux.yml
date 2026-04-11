@@ -23,7 +23,14 @@ jobs:
             build-essential \
             pkg-config \
             libayatana-appindicator3-dev \
+            libx11-dev \
+            xvfb \
             ffmpeg
+
+      - name: Start virtual display (required by golang.design/x/hotkey on Linux)
+        run: |
+          Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+          echo "DISPLAY=:99.0" >> $GITHUB_ENV
 
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
@@ -33,6 +40,8 @@ jobs:
 
       - name: Build
         run: wails build -tags webkit2_41 -platform linux/amd64
+        env:
+          DISPLAY: :99.0
 
       - name: Upload binary
         uses: actions/upload-artifact@v4

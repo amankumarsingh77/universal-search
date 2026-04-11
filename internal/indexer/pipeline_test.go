@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -79,7 +80,7 @@ func TestIndexFile_SkipsUnchangedFile(t *testing.T) {
 	}
 
 	// indexFile should skip (return nil) since hash matches.
-	if err := p.indexFile(filePath); err != nil {
+	if err := p.indexFile(filePath, false); err != nil {
 		t.Fatalf("expected nil (skip), got: %v", err)
 	}
 }
@@ -112,7 +113,7 @@ func TestIndexFile_ReindexesFileWithEmptyHash(t *testing.T) {
 	}
 
 	// Should NOT skip. With nil embedder it should fail with "embedder not initialized".
-	err = p.indexFile(filePath)
+	err = p.indexFile(filePath, false)
 	if err == nil {
 		t.Fatal("expected an error (embedder not initialized), got nil")
 	}
@@ -230,7 +231,7 @@ func TestIndexFile_DoesNotUpdateHashIfChunkFails(t *testing.T) {
 
 	// Start with no record in the store — indexFile will call UpsertFile with empty hash.
 	// Then it will fail at embedding (nil embedder) and must NOT call UpdateContentHash.
-	err := p.indexFile(filePath)
+	err := p.indexFile(filePath, false)
 	if err == nil {
 		t.Fatal("expected error from nil embedder")
 	}
@@ -327,6 +328,35 @@ func TestPipeline_PeriodicSave_NotCalledBeforeSaveInterval(t *testing.T) {
 	}
 }
 
+// TestResetStatus verifies that ResetStatus zeroes all indexing counters.
+func TestResetStatus(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	// Simulate counters being incremented by a previous run.
+	p.mu.Lock()
+	p.status.TotalFiles = 42
+	p.status.IndexedFiles = 38
+	p.status.FailedFiles = 4
+	p.status.CurrentFile = "/some/file.txt"
+	p.mu.Unlock()
+
+	p.ResetStatus()
+
+	s := p.Status()
+	if s.TotalFiles != 0 {
+		t.Errorf("expected TotalFiles=0, got %d", s.TotalFiles)
+	}
+	if s.IndexedFiles != 0 {
+		t.Errorf("expected IndexedFiles=0, got %d", s.IndexedFiles)
+	}
+	if s.FailedFiles != 0 {
+		t.Errorf("expected FailedFiles=0, got %d", s.FailedFiles)
+	}
+	if s.CurrentFile != "" {
+		t.Errorf("expected CurrentFile to be empty, got %q", s.CurrentFile)
+	}
+}
+
 // TestSetEmbedder_NilEmbedder — Phase 1 Task 1
 // A pipeline created with nil embedder, after SetEmbedder(nil), must fail
 // indexFile with "embedder not initialized" error.
@@ -342,7 +372,7 @@ func TestSetEmbedder_NilEmbedder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := p.indexFile(filePath)
+	err := p.indexFile(filePath, false)
 	if err == nil {
 		t.Fatal("expected error from nil embedder, got nil")
 	}
@@ -381,6 +411,151 @@ func TestSetEmbedder_ReplaceEmbedder(t *testing.T) {
 	}
 	if got != emb {
 		t.Fatal("expected embedder pointer to match what was passed to SetEmbedder")
+	}
+}
+
+// TestIndexFile_ForceBypassesHashCheck
+// force=true on a file with matching hash → does NOT skip (returns "embedder not initialized")
+// force=false on a file with matching hash → skips (returns nil)
+func TestIndexFile_ForceBypassesHashCheck(t *testing.T) {
+	p, s, _ := newTestPipeline(t, nil)
+
+	dir := t.TempDir()
+	filePath := dir + "/hello.txt"
+	if err := os.WriteFile(filePath, []byte("hello world"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hash, err := hashFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Stat(filePath)
+	_, err = s.UpsertFile(store.FileRecord{
+		Path:        filePath,
+		FileType:    "text",
+		Extension:   ".txt",
+		SizeBytes:   info.Size(),
+		ModifiedAt:  info.ModTime(),
+		IndexedAt:   time.Now(),
+		ContentHash: hash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// force=false: should skip (return nil)
+	if err := p.indexFile(filePath, false); err != nil {
+		t.Fatalf("force=false: expected nil (skip), got: %v", err)
+	}
+
+	// force=true: should NOT skip → hits embedder nil → "embedder not initialized"
+	err = p.indexFile(filePath, true)
+	if err == nil {
+		t.Fatal("force=true: expected error (not skipped), got nil")
+	}
+	if !strings.Contains(err.Error(), "embedder not initialized") {
+		t.Fatalf("force=true: unexpected error: %v", err)
+	}
+}
+
+// TestSubmitFolder_ForceFieldPropagated
+// SubmitFolder with force=true → job in jobCh has force=true
+func TestSubmitFolder_ForceFieldPropagated(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	p.SubmitFolder("/tmp/testfolder", nil, true)
+
+	select {
+	case job := <-p.jobCh:
+		if !job.force {
+			t.Fatal("expected job.force=true, got false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no job in channel")
+	}
+}
+
+// TestResetStatus_IncrementsGeneration
+// ResetStatus must increment the generation counter each call
+func TestResetStatus_IncrementsGeneration(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	gen0 := p.generation.Load()
+	p.ResetStatus()
+	gen1 := p.generation.Load()
+	p.ResetStatus()
+	gen2 := p.generation.Load()
+
+	if gen1 != gen0+1 {
+		t.Fatalf("expected generation to increment by 1, got %d → %d", gen0, gen1)
+	}
+	if gen2 != gen1+1 {
+		t.Fatalf("expected generation to increment by 1, got %d → %d", gen1, gen2)
+	}
+}
+
+// TestSetTotalFiles_SetsCountAndRunning
+// SetTotalFiles must set TotalFiles to the given value and mark IsRunning=true.
+func TestSetTotalFiles_SetsCountAndRunning(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	p.SetTotalFiles(42)
+
+	s := p.Status()
+	if s.TotalFiles != 42 {
+		t.Fatalf("expected TotalFiles=42, got %d", s.TotalFiles)
+	}
+	if !s.IsRunning {
+		t.Fatal("expected IsRunning=true after SetTotalFiles")
+	}
+}
+
+// TestProcessFolder_ForceDoesNotAccumulateTotalFiles
+// When force=true, processFolder must NOT add to TotalFiles (caller already set it).
+func TestProcessFolder_ForceDoesNotAccumulateTotalFiles(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	dir := t.TempDir()
+	// Create 2 text files.
+	for _, name := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Pre-set TotalFiles to 2 (as ReindexNow would do).
+	p.SetTotalFiles(2)
+
+	// Run processFolder with force=true directly (no worker goroutine).
+	// It will fail at embedding (nil embedder) but that's fine — we just need it to run.
+	p.processFolder(dir, nil, true)
+
+	s := p.Status()
+	// TotalFiles should still be 2, not 4 (2+2).
+	if s.TotalFiles != 2 {
+		t.Fatalf("expected TotalFiles=2 (pre-set, not doubled), got %d", s.TotalFiles)
+	}
+}
+
+// TestProcessFolder_NonForceAccumulates
+// When force=false, processFolder adds len(files) to TotalFiles (normal incremental behavior).
+func TestProcessFolder_NonForceAccumulates(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	dir := t.TempDir()
+	for _, name := range []string{"a.txt", "b.txt", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// TotalFiles starts at 0.
+	p.processFolder(dir, nil, false)
+
+	s := p.Status()
+	if s.TotalFiles != 3 {
+		t.Fatalf("expected TotalFiles=3, got %d", s.TotalFiles)
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"universal-search/internal/chunker"
 	"universal-search/internal/desktop"
 	"universal-search/internal/embedder"
 	"universal-search/internal/indexer"
@@ -334,22 +335,50 @@ func (a *App) ReindexNow() {
 	}
 	folders, _ := a.store.GetIndexedFolders()
 	patterns, _ := a.store.GetExcludedPatterns()
+	a.pipeline.ResetStatus()
+	total := countIndexableFiles(folders, patterns)
+	a.pipeline.SetTotalFiles(total)
 	for _, folder := range folders {
-		a.pipeline.SubmitFolder(folder, patterns)
+		a.pipeline.SubmitFolder(folder, patterns, true)
 	}
 }
 
-// ReindexFolder triggers a full re-index of a specific folder.
-func (a *App) ReindexFolder(path string) error {
+// ReindexFolder triggers a re-index of a single folder.
+func (a *App) ReindexFolder(path string) {
 	if a.store == nil || a.pipeline == nil {
-		return fmt.Errorf("store not initialized")
+		return
 	}
-	patterns, err := a.store.GetExcludedPatterns()
-	if err != nil {
-		return err
+	patterns, _ := a.store.GetExcludedPatterns()
+	a.pipeline.ResetStatus()
+	total := countIndexableFiles([]string{path}, patterns)
+	a.pipeline.SetTotalFiles(total)
+	a.pipeline.SubmitFolder(path, patterns, true)
+}
+
+// countIndexableFiles walks the given folders and counts files that the indexer
+// would process, applying the same exclude-pattern logic as processFolder.
+func countIndexableFiles(folders []string, excludePatterns []string) int {
+	total := 0
+	for _, folder := range folders {
+		filepath.WalkDir(folder, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				for _, pat := range excludePatterns {
+					if matched, _ := filepath.Match(pat, d.Name()); matched {
+						return filepath.SkipDir
+					}
+				}
+				return nil
+			}
+			if chunker.Classify(path) != chunker.TypeUnknown {
+				total++
+			}
+			return nil
+		})
 	}
-	a.pipeline.SubmitFolder(path, patterns)
-	return nil
+	return total
 }
 
 // AddFolder adds a folder to the indexed folders list, starts watching it,
@@ -368,7 +397,7 @@ func (a *App) AddFolder(path string) error {
 	// Queue indexing for the newly added folder.
 	if a.pipeline != nil {
 		patterns, _ := a.store.GetExcludedPatterns()
-		a.pipeline.SubmitFolder(path, patterns)
+		a.pipeline.SubmitFolder(path, patterns, false)
 	}
 	return nil
 }

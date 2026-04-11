@@ -66,6 +66,10 @@ export function Quit() {
   return window['go']['main']['App']['Quit']();
 }
 
+export function ReindexFolder(arg1) {
+  return window['go']['main']['App']['ReindexFolder'](arg1);
+}
+
 export function ReindexNow() {
   return window['go']['main']['App']['ReindexNow']();
 }

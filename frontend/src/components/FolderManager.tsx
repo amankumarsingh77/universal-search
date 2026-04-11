@@ -22,6 +22,7 @@ export function FolderManager({ onClose }: FolderManagerProps) {
   const [activeTab, setActiveTab] = useState<'indexed' | 'ignored'>('indexed');
   const [ignoredPatterns, setIgnoredPatterns] = useState<string[]>([]);
   const [newPattern, setNewPattern] = useState('');
+  const [reindexingFolder, setReindexingFolder] = useState<string | null>(null);
 
   const loadFolders = useCallback(async () => {
     try {
@@ -72,14 +73,6 @@ export function FolderManager({ onClose }: FolderManagerProps) {
     }
   };
 
-  const handleReindex = async (path: string) => {
-    try {
-      await ReindexFolder(path);
-    } catch (err) {
-      console.error('Failed to reindex folder:', err);
-    }
-  };
-
   const handleAddPattern = async () => {
     const trimmed = newPattern.trim();
     if (!trimmed) return;
@@ -98,6 +91,18 @@ export function FolderManager({ onClose }: FolderManagerProps) {
       await loadIgnoredPatterns();
     } catch (err) {
       console.error('Failed to remove pattern:', err);
+    }
+  };
+
+  const handleReindex = async (path: string) => {
+    if (reindexingFolder) return;
+    setReindexingFolder(path);
+    try {
+      await ReindexFolder(path);
+    } catch (err) {
+      console.error('Failed to reindex folder:', err);
+    } finally {
+      setTimeout(() => setReindexingFolder(null), 1500);
     }
   };
 
@@ -154,8 +159,9 @@ export function FolderManager({ onClose }: FolderManagerProps) {
                     style={styles.reindexBtn}
                     onClick={() => handleReindex(folder)}
                     title="Reindex folder"
+                    disabled={reindexingFolder === folder}
                   >
-                    ↺
+                    {reindexingFolder === folder ? 'Reindexing...' : '↺'}
                   </button>
                   <button
                     style={styles.removeBtn}

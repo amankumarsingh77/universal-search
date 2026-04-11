@@ -45,6 +45,7 @@ type indexJob struct {
 	folderPath      string
 	excludePatterns []string
 	filePath        string
+	force           bool
 }
 
 type OnJobDone func()
@@ -68,6 +69,7 @@ type Pipeline struct {
 	onJobDone  OnJobDone
 	workerWg   sync.WaitGroup
 	pendingJobs atomic.Int32
+	generation  atomic.Int32
 
 	chunksSinceLastSave int // protected by mu
 }
@@ -109,6 +111,26 @@ func (p *Pipeline) Status() IndexStatus {
 	return s
 }
 
+// SetTotalFiles sets the TotalFiles counter and marks indexing as running.
+// Call before submitting force-reindex jobs to show an accurate total upfront.
+func (p *Pipeline) SetTotalFiles(n int) {
+	p.mu.Lock()
+	p.status.TotalFiles = n
+	p.status.IsRunning = true
+	p.mu.Unlock()
+}
+
+// ResetStatus resets indexing counters to zero. Call before starting a new reindex run.
+func (p *Pipeline) ResetStatus() {
+	p.generation.Add(1)
+	p.mu.Lock()
+	p.status.TotalFiles = 0
+	p.status.IndexedFiles = 0
+	p.status.FailedFiles = 0
+	p.status.CurrentFile = ""
+	p.mu.Unlock()
+}
+
 func (p *Pipeline) Pause() {
 	p.logger.Info("pipeline paused")
 	p.mu.Lock()
@@ -133,10 +155,10 @@ func (p *Pipeline) Stop() {
 	p.workerWg.Wait()
 }
 
-func (p *Pipeline) SubmitFolder(folderPath string, excludePatterns []string) {
+func (p *Pipeline) SubmitFolder(folderPath string, excludePatterns []string, force bool) {
 	p.pendingJobs.Add(1)
 	select {
-	case p.jobCh <- indexJob{typ: jobFolder, folderPath: folderPath, excludePatterns: excludePatterns}:
+	case p.jobCh <- indexJob{typ: jobFolder, folderPath: folderPath, excludePatterns: excludePatterns, force: force}:
 	case <-p.ctx.Done():
 		p.pendingJobs.Add(-1)
 	}
@@ -174,7 +196,7 @@ func (p *Pipeline) worker() {
 		case job := <-p.jobCh:
 			switch job.typ {
 			case jobFolder:
-				p.processFolder(job.folderPath, job.excludePatterns)
+				p.processFolder(job.folderPath, job.excludePatterns, job.force)
 			case jobSingleFile:
 				p.processSingleFile(job.filePath)
 			}
@@ -210,7 +232,7 @@ func (p *Pipeline) waitIfPaused() {
 	}
 }
 
-func (p *Pipeline) processFolder(folderPath string, excludePatterns []string) {
+func (p *Pipeline) processFolder(folderPath string, excludePatterns []string, force bool) {
 	p.logger.Info("indexing folder", "path", folderPath, "excludePatterns", len(excludePatterns))
 	start := time.Now()
 
@@ -240,12 +262,22 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string) {
 
 	p.logger.Info("discovered files", "count", len(files), "folder", folderPath)
 
-	p.mu.Lock()
-	p.status.TotalFiles += len(files)
-	p.status.IsRunning = true
-	p.mu.Unlock()
+	if !force {
+		p.mu.Lock()
+		p.status.TotalFiles += len(files)
+		p.status.IsRunning = true
+		p.mu.Unlock()
+	}
+
+	gen := p.generation.Load()
 
 	for _, filePath := range files {
+		// Cancel if a new reindex was triggered.
+		if p.generation.Load() != gen {
+			p.logger.Info("reindex generation changed, cancelling in-flight run", "folder", folderPath)
+			return
+		}
+
 		select {
 		case <-p.ctx.Done():
 			return
@@ -258,7 +290,7 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string) {
 		p.status.CurrentFile = filePath
 		p.mu.Unlock()
 
-		if err := p.indexFile(filePath); err != nil {
+		if err := p.indexFile(filePath, force); err != nil {
 			p.logger.Warn("file indexing failed", "path", filePath, "error", err)
 			p.mu.Lock()
 			p.status.FailedFiles++
@@ -301,7 +333,7 @@ func (p *Pipeline) processSingleFile(filePath string) {
 	p.status.CurrentFile = filePath
 	p.mu.Unlock()
 
-	if err := p.indexFile(filePath); err != nil {
+	if err := p.indexFile(filePath, false); err != nil {
 		p.logger.Warn("single file indexing failed", "path", filePath, "error", err)
 		p.mu.Lock()
 		p.status.FailedFiles++
@@ -313,7 +345,7 @@ func (p *Pipeline) processSingleFile(filePath string) {
 	}
 }
 
-func (p *Pipeline) indexFile(filePath string) error {
+func (p *Pipeline) indexFile(filePath string, force bool) error {
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return err
@@ -324,10 +356,12 @@ func (p *Pipeline) indexFile(filePath string) error {
 		return err
 	}
 
-	existing, err := p.store.GetFileByPath(filePath)
-	if err == nil && existing.ContentHash == hash {
-		p.logger.Debug("skipping unchanged file", "path", filePath)
-		return nil
+	if !force {
+		existing, err := p.store.GetFileByPath(filePath)
+		if err == nil && existing.ContentHash == hash {
+			p.logger.Debug("skipping unchanged file", "path", filePath)
+			return nil
+		}
 	}
 
 	chunks, fileType, err := chunker.ChunkFile(filePath)

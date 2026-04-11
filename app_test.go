@@ -216,18 +216,16 @@ func newTestPipeline(t *testing.T, s *store.Store) *indexer.Pipeline {
 	return p
 }
 
-// TestReindexFolder_NilStore — REQ-001 / EDGE-004
-// When the store is nil ReindexFolder must return an error without panicking.
+// TestReindexFolder_NilStore — REQ-001
+// When the store is nil ReindexFolder must return without panicking.
 func TestReindexFolder_NilStore(t *testing.T) {
 	a := &App{store: nil, pipeline: nil, logger: slog.Default()}
-	err := a.ReindexFolder("/some/path")
-	if err == nil {
-		t.Fatal("expected error when store is nil, got nil")
-	}
+	// Should not panic.
+	a.ReindexFolder("/some/path")
 }
 
 // TestReindexFolder_NilPipeline — REQ-001
-// When the pipeline is nil ReindexFolder must return an error.
+// When the pipeline is nil ReindexFolder must return without panicking.
 func TestReindexFolder_NilPipeline(t *testing.T) {
 	s, err := store.NewStore(":memory:", slog.Default())
 	if err != nil {
@@ -236,14 +234,12 @@ func TestReindexFolder_NilPipeline(t *testing.T) {
 	defer s.Close()
 
 	a := &App{store: s, pipeline: nil, logger: slog.Default()}
-	err = a.ReindexFolder("/some/path")
-	if err == nil {
-		t.Fatal("expected error when pipeline is nil, got nil")
-	}
+	// Should not panic.
+	a.ReindexFolder("/some/path")
 }
 
 // TestReindexFolder_Success — REQ-001, REQ-002
-// Happy path: store has patterns, pipeline is valid — must return nil.
+// Happy path: store has patterns, pipeline is valid — must not panic.
 func TestReindexFolder_Success(t *testing.T) {
 	s, err := store.NewStore(":memory:", slog.Default())
 	if err != nil {
@@ -260,17 +256,13 @@ func TestReindexFolder_Success(t *testing.T) {
 
 	p := newTestPipeline(t, s)
 	a := &App{store: s, pipeline: p, logger: slog.Default()}
-
-	if err := a.ReindexFolder("/any/folder"); err != nil {
-		t.Fatalf("expected nil, got: %v", err)
-	}
+	// Should not panic and should submit the folder.
+	a.ReindexFolder("/any/folder")
 }
 
-// TestReindexFolder_StoreError_PropagatesAndDoesNotSubmit — EDGE-004
-// When GetExcludedPatterns fails (closed store) the error must be returned.
-// SubmitFolder must not be called — verified indirectly: if the pipeline's
-// pending-job counter stays at 0 no job was queued.
-func TestReindexFolder_StoreError_PropagatesAndDoesNotSubmit(t *testing.T) {
+// TestReindexFolder_StoreError_DoesNotPanic — EDGE-004
+// When GetExcludedPatterns fails (closed store) ReindexFolder must not panic.
+func TestReindexFolder_StoreError_DoesNotPanic(t *testing.T) {
 	s, err := store.NewStore(":memory:", slog.Default())
 	if err != nil {
 		t.Fatal(err)
@@ -281,15 +273,12 @@ func TestReindexFolder_StoreError_PropagatesAndDoesNotSubmit(t *testing.T) {
 
 	// Close the store so all DB calls return an error.
 	s.Close()
-
-	err = a.ReindexFolder("/any/folder")
-	if err == nil {
-		t.Fatal("expected error after store closed, got nil")
-	}
+	// Should not panic.
+	a.ReindexFolder("/any/folder")
 }
 
 // TestReindexFolder_NonExistentPath — REQ-006 / EDGE-003
-// Passing a path that does not exist on disk must still return nil —
+// Passing a path that does not exist on disk must not panic —
 // the pipeline handles non-existent paths gracefully during processing.
 func TestReindexFolder_NonExistentPath(t *testing.T) {
 	s, err := store.NewStore(":memory:", slog.Default())
@@ -300,8 +289,6 @@ func TestReindexFolder_NonExistentPath(t *testing.T) {
 
 	p := newTestPipeline(t, s)
 	a := &App{store: s, pipeline: p, logger: slog.Default()}
-
-	if err := a.ReindexFolder("/does/not/exist/at/all"); err != nil {
-		t.Fatalf("expected nil for non-existent path, got: %v", err)
-	}
+	// Should not panic.
+	a.ReindexFolder("/does/not/exist/at/all")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -40,6 +41,11 @@ const (
 
 const saveInterval = 50
 
+// errStaleGeneration signals that a file's embedding results were discarded
+// because a new generation (e.g. from ResetStatus) superseded the run. Callers
+// must treat this as neither success nor failure — the file is simply skipped.
+var errStaleGeneration = errors.New("stale generation: embedding discarded")
+
 type indexJob struct {
 	typ             jobType
 	folderPath      string
@@ -50,10 +56,17 @@ type indexJob struct {
 
 type OnJobDone func()
 
+// embIface is the subset of embedder.Embedder used by the pipeline.
+// Extracted as an interface so tests can inject a mock.
+type embIface interface {
+	EmbedBatch(ctx context.Context, chunks []embedder.ChunkInput) ([][]float32, error)
+}
+
 type Pipeline struct {
 	store    *store.Store
 	index    *vectorstore.Index
 	embedder *embedder.Embedder
+	mockEmb  embIface // non-nil in tests; takes priority over embedder
 	thumbDir string
 	logger   *slog.Logger
 
@@ -65,11 +78,12 @@ type Pipeline struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 
-	jobCh      chan indexJob
-	onJobDone  OnJobDone
-	workerWg   sync.WaitGroup
+	jobCh       chan indexJob
+	onJobDone   OnJobDone
+	workerWg    sync.WaitGroup
 	pendingJobs atomic.Int32
 	generation  atomic.Int32
+	workerCount int
 
 	chunksSinceLastSave int // protected by mu
 }
@@ -77,21 +91,25 @@ type Pipeline struct {
 func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder, thumbDir string, logger *slog.Logger, onDone OnJobDone) *Pipeline {
 	ctx, cancel := context.WithCancel(context.Background())
 	log := logger.WithGroup("indexer")
-	log.Info("pipeline created", "thumbDir", thumbDir)
+	workerCount := 4
+	log.Info("pipeline created", "thumbDir", thumbDir, "workers", workerCount)
 	p := &Pipeline{
-		store:     s,
-		index:     idx,
-		embedder:  emb,
-		thumbDir:  thumbDir,
-		logger:    log,
-		pauseCh:   make(chan struct{}, 1),
-		ctx:       ctx,
-		cancel:    cancel,
-		jobCh:     make(chan indexJob, 64),
-		onJobDone: onDone,
+		store:       s,
+		index:       idx,
+		embedder:    emb,
+		thumbDir:    thumbDir,
+		logger:      log,
+		pauseCh:     make(chan struct{}, 1),
+		ctx:         ctx,
+		cancel:      cancel,
+		jobCh:       make(chan indexJob, 64),
+		onJobDone:   onDone,
+		workerCount: workerCount,
 	}
-	p.workerWg.Add(1)
-	go p.worker()
+	for i := 0; i < workerCount; i++ {
+		p.workerWg.Add(1)
+		go p.worker()
+	}
 	return p
 }
 
@@ -101,6 +119,21 @@ func (p *Pipeline) SetEmbedder(e *embedder.Embedder) {
 	p.embedderMu.Lock()
 	p.embedder = e
 	p.embedderMu.Unlock()
+}
+
+// getEmbedder returns the active embedder interface. In tests, mockEmb takes priority.
+// Returns nil if no embedder is configured.
+func (p *Pipeline) getEmbedder() embIface {
+	if p.mockEmb != nil {
+		return p.mockEmb
+	}
+	p.embedderMu.RLock()
+	e := p.embedder
+	p.embedderMu.RUnlock()
+	if e == nil {
+		return nil
+	}
+	return e
 }
 
 func (p *Pipeline) Status() IndexStatus {
@@ -271,45 +304,65 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string, fo
 
 	gen := p.generation.Load()
 
-	for _, filePath := range files {
-		// Cancel if a new reindex was triggered.
-		if p.generation.Load() != gen {
-			p.logger.Info("reindex generation changed, cancelling in-flight run", "folder", folderPath)
-			return
-		}
+	// Process files concurrently using a semaphore-bounded pool.
+	// We do NOT route back through jobCh — that would deadlock because this
+	// function is itself running inside a worker. Instead, we spawn goroutines
+	// directly here, bounded by workerCount to respect the rate limiter budget.
+	concurrency := p.workerCount
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
 
+	for _, filePath := range files {
+		if p.generation.Load() != gen {
+			p.logger.Info("reindex generation changed, cancelling folder run", "folder", folderPath)
+			break
+		}
 		select {
 		case <-p.ctx.Done():
-			return
+			break
 		default:
 		}
 
 		p.waitIfPaused()
 
-		p.mu.Lock()
-		p.status.CurrentFile = filePath
-		p.mu.Unlock()
+		sem <- struct{}{} // acquire slot
+		wg.Add(1)
+		fp := filePath
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }() // release slot
 
-		if err := p.indexFile(filePath, force); err != nil {
-			p.logger.Warn("file indexing failed", "path", filePath, "error", err)
 			p.mu.Lock()
-			p.status.FailedFiles++
-			if isQuotaExhaustedError(err) {
-				p.status.QuotaPaused = true
-				p.status.QuotaResumeAt = time.Now().Add(30 * time.Minute).Format(time.RFC3339)
-				p.logger.Error("all API keys exhausted, pausing indexing", "resumeAt", p.status.QuotaResumeAt)
-			}
+			p.status.CurrentFile = fp
 			p.mu.Unlock()
 
-			if isQuotaExhaustedError(err) {
-				p.waitForQuotaRecovery()
+			if err := p.indexFile(fp, force); err != nil {
+				if errors.Is(err, errStaleGeneration) {
+					// Discarded due to generation change — neither success nor failure.
+					return
+				}
+				p.logger.Warn("file indexing failed", "path", fp, "error", err)
+				p.mu.Lock()
+				p.status.FailedFiles++
+				if isQuotaExhaustedError(err) {
+					resumeAt := p.quotaResumeTime()
+					p.status.QuotaPaused = true
+					p.status.QuotaResumeAt = resumeAt.Format(time.RFC3339)
+					p.logger.Error("quota exhausted, pausing indexing", "resumeAt", resumeAt)
+				}
+				p.mu.Unlock()
+			} else {
+				p.mu.Lock()
+				p.status.IndexedFiles++
+				p.mu.Unlock()
 			}
-		} else {
-			p.mu.Lock()
-			p.status.IndexedFiles++
-			p.mu.Unlock()
-		}
+		}()
 	}
+
+	wg.Wait()
 
 	p.mu.RLock()
 	indexed := p.status.IndexedFiles
@@ -334,6 +387,9 @@ func (p *Pipeline) processSingleFile(filePath string) {
 	p.mu.Unlock()
 
 	if err := p.indexFile(filePath, false); err != nil {
+		if errors.Is(err, errStaleGeneration) {
+			return
+		}
 		p.logger.Warn("single file indexing failed", "path", filePath, "error", err)
 		p.mu.Lock()
 		p.status.FailedFiles++
@@ -402,33 +458,79 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 	}
 	p.store.DeleteChunksByFileID(fileID)
 
-	p.embedderMu.RLock()
-	emb := p.embedder
-	p.embedderMu.RUnlock()
+	emb := p.getEmbedder()
 	if emb == nil {
 		return fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
 	}
 
-	// Phase 2: embed all chunks. Track whether all succeed.
-	allSucceeded := true
+	// Phase 2: build batch inputs from non-empty chunks. Empty chunks are
+	// skipped entirely (no placeholder embedding) to avoid wasting quota; we
+	// track the corresponding chunker.Chunk in batchChunks so vecs[i] aligns
+	// with batchChunks[i] in Phase 3.
 	fileName := filepath.Base(filePath)
+	batchInputs := make([]embedder.ChunkInput, 0, len(chunks))
+	batchChunks := make([]chunker.Chunk, 0, len(chunks))
 	for _, chunk := range chunks {
-		var vec []float32
-
-		if chunk.Text != "" {
-			vec, err = emb.EmbedDocumentWithTitle(p.ctx, fileName, chunk.Text)
-		} else if len(chunk.Content) > 0 {
-			vec, err = emb.EmbedBytes(p.ctx, chunk.Content, chunk.MimeType, fileName)
-		} else {
-			continue
+		switch {
+		case chunk.Text != "":
+			batchInputs = append(batchInputs, embedder.ChunkInput{
+				Title: fileName,
+				Text:  chunk.Text,
+			})
+			batchChunks = append(batchChunks, chunk)
+		case len(chunk.Content) > 0:
+			batchInputs = append(batchInputs, embedder.ChunkInput{
+				Title:    fileName,
+				MIMEType: chunk.MimeType,
+				Data:     chunk.Content,
+			})
+			batchChunks = append(batchChunks, chunk)
 		}
+	}
 
-		if err != nil {
-			p.logger.Warn("embedding failed", "path", filePath, "chunk", chunk.Index, "error", err)
-			allSucceeded = false
-			continue
+	if len(batchInputs) == 0 {
+		// Every chunk was empty — commit the hash so we don't re-scan forever.
+		p.logger.Debug("file has only empty chunks, committing hash without embedding", "path", filePath, "chunks", len(chunks))
+		if err := p.store.UpdateContentHash(fileID, hash); err != nil {
+			p.logger.Error("failed to update content hash", "path", filePath, "error", err)
+			return err
 		}
+		return nil
+	}
 
+	// Capture generation before embedding so we can detect stale runs.
+	gen := p.generation.Load()
+
+	vecs, embedErr := emb.EmbedBatch(p.ctx, batchInputs)
+
+	// If generation advanced while we were embedding, discard results (stale run).
+	if p.generation.Load() != gen {
+		p.logger.Info("generation changed mid-batch, discarding results", "path", filePath)
+		return errStaleGeneration
+	}
+
+	if embedErr != nil {
+		if isQuotaExhaustedError(embedErr) {
+			resumeAt := p.quotaResumeTime()
+			p.mu.Lock()
+			p.status.QuotaPaused = true
+			p.status.QuotaResumeAt = resumeAt.Format(time.RFC3339)
+			p.mu.Unlock()
+			p.logger.Warn("quota exhausted, pipeline paused", "resumeAt", resumeAt)
+		}
+		p.logger.Warn("batch embedding failed", "path", filePath, "error", embedErr)
+		return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
+	}
+
+	// Phase 3: write vectors and chunks to store in chunk.Index order.
+	// Guard against the API returning fewer embeddings than requested.
+	if len(vecs) != len(batchChunks) {
+		p.logger.Warn("embedding count mismatch", "path", filePath, "chunks", len(batchChunks), "vecs", len(vecs))
+		return fmt.Errorf("embedding count mismatch for %s: got %d vecs for %d chunks", filePath, len(vecs), len(batchChunks))
+	}
+	allSucceeded := true
+	for i, vec := range vecs {
+		chunk := batchChunks[i]
 		vecID := fmt.Sprintf("f%d-c%d", fileID, chunk.Index)
 		if addErr := p.index.Add(vecID, vec); addErr != nil {
 			p.logger.Warn("adding vector failed", "path", filePath, "chunk", chunk.Index, "error", addErr)
@@ -457,7 +559,7 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 		}
 	}
 
-	// Phase 3: commit content_hash only if all chunks succeeded.
+	// Phase 4: commit content_hash only if all chunks stored successfully.
 	if allSucceeded {
 		if err := p.store.UpdateContentHash(fileID, hash); err != nil {
 			p.logger.Error("failed to update content hash", "path", filePath, "error", err)
@@ -468,6 +570,21 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 
 	p.logger.Warn("some chunks failed — content_hash not committed, file will be re-indexed on next startup", "path", filePath)
 	return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
+}
+
+// quotaResumeTime returns the time when the quota pause is expected to expire.
+// It reads from the embedder's rate limiter when available; otherwise falls back
+// to a 30-second default from now.
+func (p *Pipeline) quotaResumeTime() time.Time {
+	p.embedderMu.RLock()
+	emb := p.embedder
+	p.embedderMu.RUnlock()
+	if emb != nil {
+		if t := emb.Limiter().PausedUntil(); !t.IsZero() {
+			return t
+		}
+	}
+	return time.Now().Add(30 * time.Second)
 }
 
 func isQuotaExhaustedError(err error) bool {

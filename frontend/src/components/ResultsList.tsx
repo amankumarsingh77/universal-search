@@ -8,11 +8,13 @@ interface ResultsListProps {
   onSelect: (index: number) => void;
   onOpen: (filePath: string) => void;
   hasFolders: boolean;
+  hasApiKey: boolean;
   query: string;
   onAddFolder: () => void;
+  onSetApiKey: () => void;
 }
 
-export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolders, query, onAddFolder }: ResultsListProps) {
+export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolders, hasApiKey, query, onAddFolder, onSetApiKey }: ResultsListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemHeight = 56;
 
@@ -59,6 +61,22 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
     );
   }
 
+  // No query + has folders but no API key
+  if (!query && results.length === 0 && !hasApiKey) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.empty}>
+          <span style={styles.emptyIcon}>🔑</span>
+          <span style={styles.emptyText}>Gemini API key not configured</span>
+          <span style={styles.emptySubText}>Indexing and search require a valid API key.</span>
+          <button style={styles.addFolderBtn} onClick={onSetApiKey}>
+            Set API key
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // No query + has folders
   if (!query && results.length === 0) {
     return (
@@ -66,6 +84,14 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
         <div style={styles.empty}>
           <span style={styles.emptyIcon}>🔍</span>
           <span style={styles.emptyText}>Type to search your files</span>
+          {!hasApiKey && (
+            <span style={styles.apiKeyWarning}>
+              No API key set —{' '}
+              <button style={styles.apiKeyLink} onClick={onSetApiKey}>
+                configure now
+              </button>
+            </span>
+          )}
         </div>
       </div>
     );
@@ -134,5 +160,25 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 12,
     marginTop: 8,
+  },
+  emptySubText: {
+    fontSize: '11px',
+    color: 'var(--text-tertiary)',
+    textAlign: 'center',
+  },
+  apiKeyWarning: {
+    fontSize: '11px',
+    color: 'var(--text-tertiary)',
+    marginTop: 4,
+  },
+  apiKeyLink: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    color: 'var(--accent-green)',
+    cursor: 'pointer',
+    fontSize: '11px',
+    textDecoration: 'underline',
+    fontFamily: 'var(--font-sans)',
   },
 };

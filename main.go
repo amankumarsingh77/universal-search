@@ -140,6 +140,9 @@ func main() {
 		runtime.EventsEmit(app.ctx, "open-api-key-dialog")
 	})
 
+	// Add the native macOS Edit menu so that Cmd+V/C/A/Z work in all input fields.
+	appMenu.Append(menu.EditMenu())
+
 	err := wails.Run(&options.App{
 		Title:     "Universal Search",
 		Width:     800,

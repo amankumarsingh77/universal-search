@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { GetFolders, RemoveFolder, AddIgnoredFolder, GetIgnoredFolders, RemoveIgnoredFolder } from '../../wailsjs/go/main/App';
+import { GetFolders, RemoveFolder, AddIgnoredFolder, GetIgnoredFolders, RemoveIgnoredFolder, ReindexFolder } from '../../wailsjs/go/main/App';
 import { EventsEmit, EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
 
 interface FolderManagerProps {
@@ -22,6 +22,7 @@ export function FolderManager({ onClose }: FolderManagerProps) {
   const [activeTab, setActiveTab] = useState<'indexed' | 'ignored'>('indexed');
   const [ignoredPatterns, setIgnoredPatterns] = useState<string[]>([]);
   const [newPattern, setNewPattern] = useState('');
+  const [reindexingFolder, setReindexingFolder] = useState<string | null>(null);
 
   const loadFolders = useCallback(async () => {
     try {
@@ -93,6 +94,18 @@ export function FolderManager({ onClose }: FolderManagerProps) {
     }
   };
 
+  const handleReindex = async (path: string) => {
+    if (reindexingFolder) return;
+    setReindexingFolder(path);
+    try {
+      await ReindexFolder(path);
+    } catch (err) {
+      console.error('Failed to reindex folder:', err);
+    } finally {
+      setTimeout(() => setReindexingFolder(null), 1500);
+    }
+  };
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -142,6 +155,14 @@ export function FolderManager({ onClose }: FolderManagerProps) {
               folders.map((folder) => (
                 <div key={folder} style={styles.folderRow}>
                   <span style={styles.folderPath}>{folder}</span>
+                  <button
+                    style={styles.reindexBtn}
+                    onClick={() => handleReindex(folder)}
+                    title="Reindex folder"
+                    disabled={reindexingFolder === folder}
+                  >
+                    {reindexingFolder === folder ? 'Reindexing...' : '↺'}
+                  </button>
                   <button
                     style={styles.removeBtn}
                     onClick={() => setConfirm({ path: folder })}
@@ -344,6 +365,17 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-tertiary)',
     flexShrink: 0,
     marginRight: '4px',
+  },
+  reindexBtn: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--text-tertiary)',
+    fontSize: '14px',
+    cursor: 'pointer',
+    padding: '2px 6px',
+    borderRadius: 'var(--radius-sm, 4px)',
+    lineHeight: 1,
+    flexShrink: 0,
   },
   removeBtn: {
     background: 'none',

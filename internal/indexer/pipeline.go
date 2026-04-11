@@ -56,12 +56,13 @@ type Pipeline struct {
 	thumbDir string
 	logger   *slog.Logger
 
-	mu      sync.RWMutex
-	status  IndexStatus
-	paused  bool
-	pauseCh chan struct{}
-	ctx     context.Context
-	cancel  context.CancelFunc
+	mu         sync.RWMutex
+	embedderMu sync.RWMutex
+	status     IndexStatus
+	paused     bool
+	pauseCh    chan struct{}
+	ctx        context.Context
+	cancel     context.CancelFunc
 
 	jobCh      chan indexJob
 	onJobDone  OnJobDone
@@ -90,6 +91,14 @@ func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder,
 	p.workerWg.Add(1)
 	go p.worker()
 	return p
+}
+
+// SetEmbedder atomically replaces the pipeline's embedder.
+// Safe to call while the worker goroutine is running.
+func (p *Pipeline) SetEmbedder(e *embedder.Embedder) {
+	p.embedderMu.Lock()
+	p.embedder = e
+	p.embedderMu.Unlock()
 }
 
 func (p *Pipeline) Status() IndexStatus {
@@ -359,7 +368,10 @@ func (p *Pipeline) indexFile(filePath string) error {
 	}
 	p.store.DeleteChunksByFileID(fileID)
 
-	if p.embedder == nil {
+	p.embedderMu.RLock()
+	emb := p.embedder
+	p.embedderMu.RUnlock()
+	if emb == nil {
 		return fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
 	}
 
@@ -370,9 +382,9 @@ func (p *Pipeline) indexFile(filePath string) error {
 		var vec []float32
 
 		if chunk.Text != "" {
-			vec, err = p.embedder.EmbedDocumentWithTitle(p.ctx, fileName, chunk.Text)
+			vec, err = emb.EmbedDocumentWithTitle(p.ctx, fileName, chunk.Text)
 		} else if len(chunk.Content) > 0 {
-			vec, err = p.embedder.EmbedBytes(p.ctx, chunk.Content, chunk.MimeType, fileName)
+			vec, err = emb.EmbedBytes(p.ctx, chunk.Content, chunk.MimeType, fileName)
 		} else {
 			continue
 		}

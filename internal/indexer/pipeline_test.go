@@ -4,9 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"universal-search/internal/embedder"
 	"universal-search/internal/store"
 	"universal-search/internal/vectorstore"
 )
@@ -322,4 +325,87 @@ func TestPipeline_PeriodicSave_NotCalledBeforeSaveInterval(t *testing.T) {
 	if calls != 0 {
 		t.Fatalf("expected no onJobDone calls before saveInterval, got %d", calls)
 	}
+}
+
+// TestSetEmbedder_NilEmbedder — Phase 1 Task 1
+// A pipeline created with nil embedder, after SetEmbedder(nil), must fail
+// indexFile with "embedder not initialized" error.
+func TestSetEmbedder_NilEmbedder(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	// Start with nil, then explicitly set nil again via SetEmbedder.
+	p.SetEmbedder(nil)
+
+	dir := t.TempDir()
+	filePath := dir + "/test.txt"
+	if err := os.WriteFile(filePath, []byte("hello world content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := p.indexFile(filePath)
+	if err == nil {
+		t.Fatal("expected error from nil embedder, got nil")
+	}
+	if !strings.Contains(err.Error(), "embedder not initialized") {
+		t.Fatalf("expected 'embedder not initialized' error, got: %v", err)
+	}
+}
+
+// TestSetEmbedder_ReplaceEmbedder — Phase 1 Task 1
+// SetEmbedder must replace the pipeline's embedder field.
+// We verify by calling SetEmbedder with a non-nil embedder and confirming
+// the struct field is updated (checked via the exported method).
+func TestSetEmbedder_ReplaceEmbedder(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	// Pipeline starts with nil embedder.
+	if p.embedder != nil {
+		t.Fatal("expected nil embedder initially")
+	}
+
+	// Create a real *embedder.Embedder with a fake key — no real API calls made.
+	emb, err := embedder.NewEmbedder("fake-key-for-test", 768, testLogger())
+	if err != nil {
+		t.Fatalf("NewEmbedder with fake key: %v", err)
+	}
+
+	p.SetEmbedder(emb)
+
+	// Confirm the field was replaced.
+	p.embedderMu.RLock()
+	got := p.embedder
+	p.embedderMu.RUnlock()
+
+	if got == nil {
+		t.Fatal("expected embedder to be non-nil after SetEmbedder")
+	}
+	if got != emb {
+		t.Fatal("expected embedder pointer to match what was passed to SetEmbedder")
+	}
+}
+
+// TestSetEmbedder_Race — Phase 1 Task 1
+// Concurrent SetEmbedder calls while the pipeline worker goroutine is idle
+// must not produce a data race. Run with: go test -race ./internal/indexer/...
+func TestSetEmbedder_Race(t *testing.T) {
+	p, _, _ := newTestPipeline(t, nil)
+
+	// Start the worker goroutine (mirrors NewPipeline behaviour).
+	p.workerWg.Add(1)
+	go p.worker()
+
+	emb, err := embedder.NewEmbedder("fake-key-race-test", 768, testLogger())
+	if err != nil {
+		t.Fatalf("NewEmbedder: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func(e *embedder.Embedder) {
+			defer wg.Done()
+			p.SetEmbedder(e)
+		}(emb)
+	}
+	wg.Wait()
 }

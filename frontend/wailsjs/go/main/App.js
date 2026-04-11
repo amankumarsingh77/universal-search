@@ -86,6 +86,14 @@ export function SetSetting(arg1, arg2) {
   return window['go']['main']['App']['SetSetting'](arg1, arg2);
 }
 
+export function SetGeminiAPIKey(arg1) {
+  return window['go']['main']['App']['SetGeminiAPIKey'](arg1);
+}
+
+export function GetHasGeminiKey() {
+  return window['go']['main']['App']['GetHasGeminiKey']();
+}
+
 export function ShowWindow() {
   return window['go']['main']['App']['ShowWindow']();
 }

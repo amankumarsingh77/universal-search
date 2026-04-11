@@ -47,6 +47,7 @@ type App struct {
 	hotkeyMgr     *desktop.HotkeyManager
 	trayIcon      []byte
 	windowMu      sync.Mutex
+	apiKeyMu      sync.Mutex  // serialises concurrent SetGeminiAPIKey calls
 	windowVisible bool
 }
 
@@ -130,9 +131,16 @@ func (a *App) startup(ctx context.Context) {
 		a.index = vectorstore.NewIndex(a.logger)
 	}
 
-	a.embedder, err = embedder.NewEmbedderFromEnv(768, a.logger)
-	if err != nil {
-		log.Warn("embedder not available", "error", err)
+	if dbKey, _ := a.store.GetSetting("gemini_api_key", ""); dbKey != "" {
+		a.embedder, err = embedder.NewEmbedder(dbKey, 768, a.logger)
+		if err != nil {
+			log.Warn("embedder init from stored key failed", "keyLen", len(dbKey), "error", err)
+		}
+	} else {
+		a.embedder, err = embedder.NewEmbedderFromEnv(768, a.logger)
+		if err != nil {
+			log.Warn("embedder not available", "error", err)
+		}
 	}
 
 	a.engine = search.New(a.store, a.index, a.logger)
@@ -532,6 +540,64 @@ func (a *App) SetSetting(key, value string) error {
 		return a.hotkeyMgr.ChangeHotkey(value)
 	}
 	return a.store.SetSetting(key, value)
+}
+
+// SetGeminiAPIKey validates the supplied Gemini API key by making a real test
+// embed call, then — if valid — persists it to the settings store and hot-swaps
+// the live embedder and indexing pipeline. Returns a non-nil error on any failure;
+// state is unchanged on failure.
+func (a *App) SetGeminiAPIKey(key string) error {
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("API key must not be empty")
+	}
+
+	a.apiKeyMu.Lock()
+	defer a.apiKeyMu.Unlock()
+
+	// Track whether we paused indexing so we can restore state.
+	wasPaused := a.pipeline.Status().Paused
+	if !wasPaused {
+		a.pipeline.Pause()
+	}
+
+	restore := func() {
+		if !wasPaused {
+			a.pipeline.Resume()
+		}
+	}
+
+	// Create a temporary embedder — never stored unless validation passes.
+	tmpEmb, err := embedder.NewEmbedder(key, 768, a.logger)
+	if err != nil {
+		restore()
+		return fmt.Errorf("failed to create embedder: %w", err)
+	}
+
+	// Validate with a real test call, 10s timeout.
+	ctx, cancel := context.WithTimeout(a.ctx, 10*time.Second)
+	defer cancel()
+	if _, err := tmpEmb.EmbedQuery(ctx, "test"); err != nil {
+		restore()
+		return fmt.Errorf("API key validation failed: %w", err)
+	}
+
+	// Validation passed — commit atomically.
+	if err := a.store.SetSetting("gemini_api_key", key); err != nil {
+		restore()
+		return fmt.Errorf("failed to persist API key: %w", err)
+	}
+	a.embedder = tmpEmb
+	a.pipeline.SetEmbedder(tmpEmb)
+
+	restore()
+
+	a.logger.Info("Gemini API key updated", "keyLen", len(key))
+	return nil
+}
+
+// GetHasGeminiKey returns true if a Gemini API key is currently configured.
+func (a *App) GetHasGeminiKey() bool {
+	return a.embedder != nil
 }
 
 func (a *App) seedDefaultIgnorePatterns() {

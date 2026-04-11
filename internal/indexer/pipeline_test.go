@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -26,20 +27,6 @@ type mockEmbedder struct {
 	embedCalls [][]embedder.ChunkInput
 	// blockCh, when non-nil, blocks EmbedBatch until closed (for concurrency tests)
 	blockCh chan struct{}
-}
-
-func (m *mockEmbedder) EmbedDocumentWithTitle(_ context.Context, _, _ string) ([]float32, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return []float32{0.1, 0.2, 0.3}, nil
-}
-
-func (m *mockEmbedder) EmbedBytes(_ context.Context, _ []byte, _, _ string) ([]float32, error) {
-	if m.err != nil {
-		return nil, m.err
-	}
-	return []float32{0.1, 0.2, 0.3}, nil
 }
 
 func (m *mockEmbedder) EmbedBatch(ctx context.Context, chunks []embedder.ChunkInput) ([][]float32, error) {
@@ -832,8 +819,8 @@ func TestIndexFile_GenerationCancelMidBatch(t *testing.T) {
 	close(blockCh)
 
 	err := <-done
-	if err != nil {
-		t.Fatalf("expected nil (stale run is not an error), got: %v", err)
+	if !errors.Is(err, errStaleGeneration) {
+		t.Fatalf("expected errStaleGeneration, got: %v", err)
 	}
 
 	// ContentHash must NOT have been committed.

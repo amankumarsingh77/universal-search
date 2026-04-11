@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -40,6 +41,11 @@ const (
 
 const saveInterval = 50
 
+// errStaleGeneration signals that a file's embedding results were discarded
+// because a new generation (e.g. from ResetStatus) superseded the run. Callers
+// must treat this as neither success nor failure — the file is simply skipped.
+var errStaleGeneration = errors.New("stale generation: embedding discarded")
+
 type indexJob struct {
 	typ             jobType
 	folderPath      string
@@ -53,8 +59,6 @@ type OnJobDone func()
 // embIface is the subset of embedder.Embedder used by the pipeline.
 // Extracted as an interface so tests can inject a mock.
 type embIface interface {
-	EmbedDocumentWithTitle(ctx context.Context, title, text string) ([]float32, error)
-	EmbedBytes(ctx context.Context, data []byte, mimeType, title string) ([]float32, error)
 	EmbedBatch(ctx context.Context, chunks []embedder.ChunkInput) ([][]float32, error)
 }
 
@@ -336,6 +340,10 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string, fo
 			p.mu.Unlock()
 
 			if err := p.indexFile(fp, force); err != nil {
+				if errors.Is(err, errStaleGeneration) {
+					// Discarded due to generation change — neither success nor failure.
+					return
+				}
 				p.logger.Warn("file indexing failed", "path", fp, "error", err)
 				p.mu.Lock()
 				p.status.FailedFiles++
@@ -379,6 +387,9 @@ func (p *Pipeline) processSingleFile(filePath string) {
 	p.mu.Unlock()
 
 	if err := p.indexFile(filePath, false); err != nil {
+		if errors.Is(err, errStaleGeneration) {
+			return
+		}
 		p.logger.Warn("single file indexing failed", "path", filePath, "error", err)
 		p.mu.Lock()
 		p.status.FailedFiles++
@@ -452,28 +463,39 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 		return fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
 	}
 
-	// Phase 2: build batch inputs from all chunks.
+	// Phase 2: build batch inputs from non-empty chunks. Empty chunks are
+	// skipped entirely (no placeholder embedding) to avoid wasting quota; we
+	// track the corresponding chunker.Chunk in batchChunks so vecs[i] aligns
+	// with batchChunks[i] in Phase 3.
 	fileName := filepath.Base(filePath)
 	batchInputs := make([]embedder.ChunkInput, 0, len(chunks))
+	batchChunks := make([]chunker.Chunk, 0, len(chunks))
 	for _, chunk := range chunks {
-		if chunk.Text != "" {
+		switch {
+		case chunk.Text != "":
 			batchInputs = append(batchInputs, embedder.ChunkInput{
 				Title: fileName,
 				Text:  chunk.Text,
 			})
-		} else if len(chunk.Content) > 0 {
+			batchChunks = append(batchChunks, chunk)
+		case len(chunk.Content) > 0:
 			batchInputs = append(batchInputs, embedder.ChunkInput{
 				Title:    fileName,
 				MIMEType: chunk.MimeType,
 				Data:     chunk.Content,
 			})
-		} else {
-			// Empty chunk — include a placeholder so indices stay aligned.
-			batchInputs = append(batchInputs, embedder.ChunkInput{
-				Title: fileName,
-				Text:  " ",
-			})
+			batchChunks = append(batchChunks, chunk)
 		}
+	}
+
+	if len(batchInputs) == 0 {
+		// Every chunk was empty — commit the hash so we don't re-scan forever.
+		p.logger.Debug("file has only empty chunks, committing hash without embedding", "path", filePath, "chunks", len(chunks))
+		if err := p.store.UpdateContentHash(fileID, hash); err != nil {
+			p.logger.Error("failed to update content hash", "path", filePath, "error", err)
+			return err
+		}
+		return nil
 	}
 
 	// Capture generation before embedding so we can detect stale runs.
@@ -484,7 +506,7 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 	// If generation advanced while we were embedding, discard results (stale run).
 	if p.generation.Load() != gen {
 		p.logger.Info("generation changed mid-batch, discarding results", "path", filePath)
-		return nil
+		return errStaleGeneration
 	}
 
 	if embedErr != nil {
@@ -502,13 +524,13 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 
 	// Phase 3: write vectors and chunks to store in chunk.Index order.
 	// Guard against the API returning fewer embeddings than requested.
-	if len(vecs) != len(chunks) {
-		p.logger.Warn("embedding count mismatch", "path", filePath, "chunks", len(chunks), "vecs", len(vecs))
-		return fmt.Errorf("embedding count mismatch for %s: got %d vecs for %d chunks", filePath, len(vecs), len(chunks))
+	if len(vecs) != len(batchChunks) {
+		p.logger.Warn("embedding count mismatch", "path", filePath, "chunks", len(batchChunks), "vecs", len(vecs))
+		return fmt.Errorf("embedding count mismatch for %s: got %d vecs for %d chunks", filePath, len(vecs), len(batchChunks))
 	}
 	allSucceeded := true
 	for i, vec := range vecs {
-		chunk := chunks[i]
+		chunk := batchChunks[i]
 		vecID := fmt.Sprintf("f%d-c%d", fileID, chunk.Index)
 		if addErr := p.index.Add(vecID, vec); addErr != nil {
 			p.logger.Warn("adding vector failed", "path", filePath, "chunk", chunk.Index, "error", addErr)

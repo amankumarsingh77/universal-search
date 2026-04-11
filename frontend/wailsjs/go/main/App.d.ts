@@ -8,7 +8,11 @@ export function AddIgnoredFolder(arg1:string):Promise<void>;
 
 export function EmitEvent(arg1:string):Promise<void>;
 
+export function GetFilePreview(arg1:string):Promise<string>;
+
 export function GetFolders():Promise<Array<string>>;
+
+export function GetHasGeminiKey():Promise<boolean>;
 
 export function GetIgnoredFolders():Promise<Array<string>>;
 
@@ -26,7 +30,11 @@ export function OpenFolder(arg1:string):Promise<void>;
 
 export function PauseIndexing():Promise<void>;
 
+export function PreEmbedQuery(arg1:string):Promise<void>;
+
 export function Quit():Promise<void>;
+
+export function ReindexFolder(arg1: string): Promise<void>;
 
 export function ReindexNow():Promise<void>;
 
@@ -36,17 +44,11 @@ export function RemoveIgnoredFolder(arg1:string):Promise<void>;
 
 export function ResumeIndexing():Promise<void>;
 
-export function GetFilePreview(arg1:string):Promise<string>;
-
-export function PreEmbedQuery(arg1:string):Promise<void>;
-
 export function Search(arg1:string):Promise<Array<main.SearchResultDTO>>;
 
+export function SetGeminiAPIKey(arg1:string):Promise<void>;
+
 export function SetSetting(arg1:string,arg2:string):Promise<void>;
-
-export function SetGeminiAPIKey(arg1:string):Promise<string>;
-
-export function GetHasGeminiKey():Promise<boolean>;
 
 export function ShowWindow():Promise<void>;
 

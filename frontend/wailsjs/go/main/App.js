@@ -14,8 +14,16 @@ export function EmitEvent(arg1) {
   return window['go']['main']['App']['EmitEvent'](arg1);
 }
 
+export function GetFilePreview(arg1) {
+  return window['go']['main']['App']['GetFilePreview'](arg1);
+}
+
 export function GetFolders() {
   return window['go']['main']['App']['GetFolders']();
+}
+
+export function GetHasGeminiKey() {
+  return window['go']['main']['App']['GetHasGeminiKey']();
 }
 
 export function GetIgnoredFolders() {
@@ -50,8 +58,16 @@ export function PauseIndexing() {
   return window['go']['main']['App']['PauseIndexing']();
 }
 
+export function PreEmbedQuery(arg1) {
+  return window['go']['main']['App']['PreEmbedQuery'](arg1);
+}
+
 export function Quit() {
   return window['go']['main']['App']['Quit']();
+}
+
+export function ReindexFolder(arg1) {
+  return window['go']['main']['App']['ReindexFolder'](arg1);
 }
 
 export function ReindexNow() {
@@ -70,28 +86,16 @@ export function ResumeIndexing() {
   return window['go']['main']['App']['ResumeIndexing']();
 }
 
-export function GetFilePreview(arg1) {
-  return window['go']['main']['App']['GetFilePreview'](arg1);
-}
-
-export function PreEmbedQuery(arg1) {
-  return window['go']['main']['App']['PreEmbedQuery'](arg1);
-}
-
 export function Search(arg1) {
   return window['go']['main']['App']['Search'](arg1);
-}
-
-export function SetSetting(arg1, arg2) {
-  return window['go']['main']['App']['SetSetting'](arg1, arg2);
 }
 
 export function SetGeminiAPIKey(arg1) {
   return window['go']['main']['App']['SetGeminiAPIKey'](arg1);
 }
 
-export function GetHasGeminiKey() {
-  return window['go']['main']['App']['GetHasGeminiKey']();
+export function SetSetting(arg1, arg2) {
+  return window['go']['main']['App']['SetSetting'](arg1, arg2);
 }
 
 export function ShowWindow() {

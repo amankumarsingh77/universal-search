@@ -44,6 +44,10 @@ export function Search(arg1:string):Promise<Array<main.SearchResultDTO>>;
 
 export function SetSetting(arg1:string,arg2:string):Promise<void>;
 
+export function SetGeminiAPIKey(arg1:string):Promise<string>;
+
+export function GetHasGeminiKey():Promise<boolean>;
+
 export function ShowWindow():Promise<void>;
 
 export function ToggleWindow():Promise<void>;

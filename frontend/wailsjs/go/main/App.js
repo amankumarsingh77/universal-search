@@ -26,6 +26,18 @@ export function GetHasGeminiKey() {
   return window['go']['main']['App']['GetHasGeminiKey']();
 }
 
+export function GetHotkeyString() {
+  return window['go']['main']['App']['GetHotkeyString']();
+}
+
+export function GetOnboarded() {
+  return window['go']['main']['App']['GetOnboarded']();
+}
+
+export function MarkOnboarded() {
+  return window['go']['main']['App']['MarkOnboarded']();
+}
+
 export function GetIgnoredFolders() {
   return window['go']['main']['App']['GetIgnoredFolders']();
 }

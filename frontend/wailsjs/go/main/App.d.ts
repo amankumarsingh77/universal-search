@@ -14,6 +14,12 @@ export function GetFolders():Promise<Array<string>>;
 
 export function GetHasGeminiKey():Promise<boolean>;
 
+export function GetHotkeyString():Promise<string>;
+
+export function GetOnboarded():Promise<boolean>;
+
+export function MarkOnboarded():Promise<void>;
+
 export function GetIgnoredFolders():Promise<Array<string>>;
 
 export function GetIndexStatus():Promise<main.IndexStatusDTO>;

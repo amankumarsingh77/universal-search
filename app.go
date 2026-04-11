@@ -618,6 +618,17 @@ func (a *App) GetHotkeyString() string {
 	return desktop.HumanReadableHotkey(mods, key)
 }
 
+// GetOnboarded returns true if the user has already seen the onboarding overlay.
+func (a *App) GetOnboarded() bool {
+	val, _ := a.store.GetSetting("onboarded", "")
+	return val == "true"
+}
+
+// MarkOnboarded records that the user has dismissed the onboarding overlay.
+func (a *App) MarkOnboarded() error {
+	return a.store.SetSetting("onboarded", "true")
+}
+
 // SetGeminiAPIKey validates the supplied Gemini API key by making a real test
 // embed call, then — if valid — persists it to the settings store and hot-swaps
 // the live embedder and indexing pipeline. Returns a non-nil error on any failure;

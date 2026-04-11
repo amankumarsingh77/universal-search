@@ -6,10 +6,11 @@ import { IndexingBar } from './components/IndexingBar';
 import { FolderManager } from './components/FolderManager';
 import ApiKeyDialog from './components/ApiKeyDialog';
 import Toast from './components/Toast';
+import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
-import { OpenFile, OpenFolder, HideWindow, GetFolders, GetHasGeminiKey } from '../wailsjs/go/main/App';
+import { OpenFile, OpenFolder, HideWindow, GetFolders, GetHasGeminiKey, GetOnboarded, MarkOnboarded } from '../wailsjs/go/main/App';
 
 function App() {
   const {
@@ -34,6 +35,7 @@ function App() {
     prevIsRunningRef.current = indexingStatus.isRunning;
   }, [indexingStatus.isRunning]);
 
+  const [onboarded, setOnboarded] = useState(true);
   const [showFolderManager, setShowFolderManager] = useState(false);
   const [hasFolders, setHasFolders] = useState(true);
   const [hasApiKey, setHasApiKey] = useState(true);
@@ -43,6 +45,7 @@ function App() {
   useEffect(() => {
     GetFolders().then(folders => setHasFolders(folders.length > 0));
     GetHasGeminiKey().then(setHasApiKey).catch(() => setHasApiKey(false));
+    GetOnboarded().then(v => setOnboarded(v));
   }, []);
 
   useEffect(() => {
@@ -169,6 +172,9 @@ function App() {
           type={toast.type}
           onDismiss={() => setToast(null)}
         />
+      )}
+      {!onboarded && (
+        <OnboardingOverlay onDismiss={() => { MarkOnboarded(); setOnboarded(true); }} />
       )}
     </div>
   );

@@ -527,6 +527,29 @@ func (s *Store) GetAllFiles() ([]FileRecord, error) {
 	return files, rows.Err()
 }
 
+// GetIncompleteFiles returns files whose content_hash is empty — these
+// started indexing but never completed (e.g. interrupted mid-flight).
+func (s *Store) GetIncompleteFiles() ([]FileRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		FROM files WHERE content_hash = ''
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("get incomplete files: %w", err)
+	}
+	defer rows.Close()
+	var files []FileRecord
+	for rows.Next() {
+		var f FileRecord
+		if err := rows.Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
+			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath); err != nil {
+			return nil, fmt.Errorf("scan file: %w", err)
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
+}
+
 // GetExcludedPatterns returns all excluded glob patterns.
 func (s *Store) GetExcludedPatterns() ([]string, error) {
 	rows, err := s.db.Query(`SELECT pattern FROM excluded_patterns`)

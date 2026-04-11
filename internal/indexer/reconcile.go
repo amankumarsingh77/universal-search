@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"universal-search/internal/chunker"
+	"universal-search/internal/store"
 )
 
 // ReconcileIndex queries all chunk vector IDs from SQLite and re-queues any file
@@ -66,6 +67,39 @@ func (p *Pipeline) ReconcileIndex() {
 	}
 
 	log.Info("reconciliation jobs submitted", "count", len(toReindex))
+
+	// Also re-queue files with an empty content_hash. These were registered
+	// in SQLite (phase 1 of the two-phase commit) but never completed — e.g.
+	// the app was killed while embedding was in flight. ReconcileIndex misses
+	// them because their partial chunks (if any) may all be present in HNSW.
+	// Build a set of already-queued file IDs to avoid double-counting.
+	alreadyQueued := make(map[int64]bool, len(toReindex))
+	for _, id := range toReindex {
+		alreadyQueued[id] = true
+	}
+
+	incomplete, err := p.store.GetIncompleteFiles()
+	if err != nil {
+		log.Warn("could not load incomplete files", "error", err)
+		return
+	}
+	var extraIncomplete []store.FileRecord
+	for _, f := range incomplete {
+		if !alreadyQueued[f.ID] {
+			extraIncomplete = append(extraIncomplete, f)
+		}
+	}
+	if len(extraIncomplete) == 0 {
+		return
+	}
+	log.Info("re-queuing incomplete files", "count", len(extraIncomplete))
+	p.mu.Lock()
+	p.status.TotalFiles += len(extraIncomplete)
+	p.status.IsRunning = true
+	p.mu.Unlock()
+	for _, f := range extraIncomplete {
+		p.SubmitFile(f.Path)
+	}
 }
 
 // StartupRescan walks all indexed folders and detects files whose mtime has changed

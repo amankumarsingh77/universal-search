@@ -50,6 +50,9 @@ type App struct {
 	windowMu      sync.Mutex
 	apiKeyMu      sync.Mutex  // serialises concurrent SetGeminiAPIKey calls
 	windowVisible bool
+
+	saveTimerMu sync.Mutex
+	saveTimer   *time.Timer
 }
 
 // SearchResultDTO is the JSON-serializable search result sent to the frontend.
@@ -203,14 +206,24 @@ func (a *App) startup(ctx context.Context) {
 	log.Info("startup complete")
 }
 
-// saveIndex persists the vector index to disk.
+// saveIndex schedules a debounced persist of the vector index to disk.
+// Rapid successive calls (e.g. from ReconcileIndex submitting many jobs)
+// collapse into a single write that fires 2 seconds after the last call.
 func (a *App) saveIndex() {
 	if a.index == nil || a.indexPath == "" {
 		return
 	}
-	if err := a.index.Save(a.indexPath); err != nil {
-		a.logger.WithGroup("app").Error("failed to save index", "error", err)
+	a.saveTimerMu.Lock()
+	if a.saveTimer != nil {
+		a.saveTimer.Reset(2 * time.Second)
+	} else {
+		a.saveTimer = time.AfterFunc(2*time.Second, func() {
+			if err := a.index.Save(a.indexPath); err != nil {
+				a.logger.WithGroup("app").Error("failed to save index", "error", err)
+			}
+		})
 	}
+	a.saveTimerMu.Unlock()
 }
 
 // shutdown is called when the Wails app is closing. It stops the pipeline,
@@ -230,7 +243,18 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.watcher != nil {
 		a.watcher.Close()
 	}
-	a.saveIndex()
+	// Cancel any pending debounced save and write synchronously.
+	a.saveTimerMu.Lock()
+	if a.saveTimer != nil {
+		a.saveTimer.Stop()
+		a.saveTimer = nil
+	}
+	a.saveTimerMu.Unlock()
+	if a.index != nil && a.indexPath != "" {
+		if err := a.index.Save(a.indexPath); err != nil {
+			log.Error("failed to save index on shutdown", "error", err)
+		}
+	}
 	if a.store != nil {
 		a.store.Close()
 	}

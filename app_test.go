@@ -6,7 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"universal-search/internal/indexer"
 	"universal-search/internal/store"
+	"universal-search/internal/vectorstore"
 )
 
 func newTestApp(t *testing.T) *App {
@@ -201,4 +203,92 @@ func TestSearchResultDTO_HasScoreField(t *testing.T) {
 	if dto.Score != 0.95 {
 		t.Fatalf("expected Score 0.95, got %v", dto.Score)
 	}
+}
+
+// newTestPipeline returns a minimal Pipeline wired to the given store.
+// The pipeline has no embedder (nil) — sufficient for SubmitFolder which only
+// enqueues work; actual file processing would fail but is not exercised here.
+func newTestPipeline(t *testing.T, s *store.Store) *indexer.Pipeline {
+	t.Helper()
+	idx := vectorstore.NewIndex(slog.Default())
+	p := indexer.NewPipeline(s, idx, nil, t.TempDir(), slog.Default(), nil)
+	t.Cleanup(func() { p.Stop() })
+	return p
+}
+
+// TestReindexFolder_NilStore — REQ-001
+// When the store is nil ReindexFolder must return without panicking.
+func TestReindexFolder_NilStore(t *testing.T) {
+	a := &App{store: nil, pipeline: nil, logger: slog.Default()}
+	// Should not panic.
+	a.ReindexFolder("/some/path")
+}
+
+// TestReindexFolder_NilPipeline — REQ-001
+// When the pipeline is nil ReindexFolder must return without panicking.
+func TestReindexFolder_NilPipeline(t *testing.T) {
+	s, err := store.NewStore(":memory:", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	a := &App{store: s, pipeline: nil, logger: slog.Default()}
+	// Should not panic.
+	a.ReindexFolder("/some/path")
+}
+
+// TestReindexFolder_Success — REQ-001, REQ-002
+// Happy path: store has patterns, pipeline is valid — must not panic.
+func TestReindexFolder_Success(t *testing.T) {
+	s, err := store.NewStore(":memory:", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	// Seed a couple of exclude patterns.
+	for _, p := range []string{"node_modules", ".git"} {
+		if err := s.AddExcludedPattern(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := newTestPipeline(t, s)
+	a := &App{store: s, pipeline: p, logger: slog.Default()}
+	// Should not panic and should submit the folder.
+	a.ReindexFolder("/any/folder")
+}
+
+// TestReindexFolder_StoreError_DoesNotPanic — EDGE-004
+// When GetExcludedPatterns fails (closed store) ReindexFolder must not panic.
+func TestReindexFolder_StoreError_DoesNotPanic(t *testing.T) {
+	s, err := store.NewStore(":memory:", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	p := newTestPipeline(t, s)
+	a := &App{store: s, pipeline: p, logger: slog.Default()}
+
+	// Close the store so all DB calls return an error.
+	s.Close()
+	// Should not panic.
+	a.ReindexFolder("/any/folder")
+}
+
+// TestReindexFolder_NonExistentPath — REQ-006 / EDGE-003
+// Passing a path that does not exist on disk must not panic —
+// the pipeline handles non-existent paths gracefully during processing.
+func TestReindexFolder_NonExistentPath(t *testing.T) {
+	s, err := store.NewStore(":memory:", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	p := newTestPipeline(t, s)
+	a := &App{store: s, pipeline: p, logger: slog.Default()}
+	// Should not panic.
+	a.ReindexFolder("/does/not/exist/at/all")
 }

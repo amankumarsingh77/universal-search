@@ -135,6 +135,10 @@ func main() {
 	settingsMenu.AddText("Manage Folders...", keys.CmdOrCtrl("o"), func(cd *menu.CallbackData) {
 		runtime.EventsEmit(app.ctx, "open-folder-manager")
 	})
+	settingsMenu.AddText("Set API Key…", nil, func(_ *menu.CallbackData) {
+		runtime.WindowShow(app.ctx)
+		runtime.EventsEmit(app.ctx, "open-api-key-dialog")
+	})
 
 	err := wails.Run(&options.App{
 		Title:     "Universal Search",

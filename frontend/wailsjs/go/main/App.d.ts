@@ -34,6 +34,8 @@ export function PreEmbedQuery(arg1:string):Promise<void>;
 
 export function Quit():Promise<void>;
 
+export function ReindexFolder(arg1: string): Promise<void>;
+
 export function ReindexNow():Promise<void>;
 
 export function RemoveFolder(arg1:string,arg2:boolean):Promise<void>;

@@ -3,9 +3,46 @@ package embedder
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
+
+	"google.golang.org/genai"
 )
+
+// newTestEmbedder builds an *Embedder wired to an injected embedFn that
+// drives the real (*Embedder).EmbedBatch implementation without touching the
+// network. fn receives the number of inputs in the current batch and returns
+// the vectors (or an error) for that batch.
+func newTestEmbedder(fn func(batchSize int) ([][]float32, error)) *Embedder {
+	e := &Embedder{
+		model:   DefaultModel,
+		dims:    3,
+		limiter: NewRateLimiter(1000, time.Minute),
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	e.embedFn = func(_ context.Context, _ string, contents []*genai.Content, _ *genai.EmbedContentConfig) ([][]float32, error) {
+		return fn(len(contents))
+	}
+	return e
+}
+
+func makeVecs(n int, base float32) [][]float32 {
+	vecs := make([][]float32, n)
+	for i := range vecs {
+		vecs[i] = []float32{base + float32(i)}
+	}
+	return vecs
+}
+
+func makeChunks(n int) []ChunkInput {
+	chunks := make([]ChunkInput, n)
+	for i := range chunks {
+		chunks[i] = ChunkInput{Title: "t", Text: "text"}
+	}
+	return chunks
+}
 
 // ---------------------------------------------------------------------------
 // Existing RateLimiter tests
@@ -125,74 +162,18 @@ func TestParseRetryAfter_NoRetryDelay(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// EmbedBatch tests
+// EmbedBatch tests — exercise the real (*Embedder).EmbedBatch path via an
+// injected embedFn, so any regression in the production batching loop is
+// caught by these assertions.
 // ---------------------------------------------------------------------------
 
-// mockEmbedder wraps an Embedder but overrides the embed call via a function
-// field so tests can inject responses without hitting the real API.
-// We test EmbedBatch by creating an Embedder with a capturedEmbed hook.
-
-// embedCallRecord records one call to embed().
-type embedCallRecord struct {
-	batchSize int
-}
-
-// testEmbedder is a thin wrapper that intercepts embed calls for test assertions.
-type testEmbedder struct {
-	calls      []embedCallRecord
-	embedFunc  func(batchSize int) ([][]float32, error)
-}
-
-// EmbedBatch re-implementation via function table — used in tests via
-// embedBatchWith helper below.
-
-// embedBatchWith runs EmbedBatch logic against a controllable embed function,
-// allowing tests without a real Gemini client.
-func embedBatchWith(
-	ctx context.Context,
-	chunks []ChunkInput,
-	embedFn func(int, int) ([][]float32, error),
-) ([][]float32, error) {
-	if len(chunks) == 0 {
-		return nil, nil
-	}
-	result := make([][]float32, 0, len(chunks))
-	for start := 0; start < len(chunks); start += maxBatchSize {
-		end := start + maxBatchSize
-		if end > len(chunks) {
-			end = len(chunks)
-		}
-		vecs, err := embedFn(start, end)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, vecs...)
-	}
-	return result, nil
-}
-
-func makeChunks(n int) []ChunkInput {
-	chunks := make([]ChunkInput, n)
-	for i := range chunks {
-		chunks[i] = ChunkInput{Title: "t", Text: "text"}
-	}
-	return chunks
-}
-
-func makeVecs(n int, base float32) [][]float32 {
-	vecs := make([][]float32, n)
-	for i := range vecs {
-		vecs[i] = []float32{base + float32(i)}
-	}
-	return vecs
-}
-
 func TestEmbedBatch_EmptyInput(t *testing.T) {
-	ctx := context.Background()
-	result, err := embedBatchWith(ctx, nil, func(s, e int) ([][]float32, error) {
+	e := newTestEmbedder(func(batchSize int) ([][]float32, error) {
 		t.Fatal("embed function should not be called for empty input")
 		return nil, nil
 	})
+
+	result, err := e.EmbedBatch(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -202,15 +183,13 @@ func TestEmbedBatch_EmptyInput(t *testing.T) {
 }
 
 func TestEmbedBatch_SingleChunk(t *testing.T) {
-	ctx := context.Background()
 	calls := 0
-	chunks := makeChunks(1)
-
-	result, err := embedBatchWith(ctx, chunks, func(s, e int) ([][]float32, error) {
+	e := newTestEmbedder(func(batchSize int) ([][]float32, error) {
 		calls++
-		return makeVecs(e-s, 1.0), nil
+		return makeVecs(batchSize, 1.0), nil
 	})
 
+	result, err := e.EmbedBatch(context.Background(), makeChunks(1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -223,15 +202,13 @@ func TestEmbedBatch_SingleChunk(t *testing.T) {
 }
 
 func TestEmbedBatch_ExactlyMaxBatchSize(t *testing.T) {
-	ctx := context.Background()
 	calls := 0
-	chunks := makeChunks(maxBatchSize)
-
-	result, err := embedBatchWith(ctx, chunks, func(s, e int) ([][]float32, error) {
+	e := newTestEmbedder(func(batchSize int) ([][]float32, error) {
 		calls++
-		return makeVecs(e-s, 0), nil
+		return makeVecs(batchSize, 0), nil
 	})
 
+	result, err := e.EmbedBatch(context.Background(), makeChunks(maxBatchSize))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -244,15 +221,13 @@ func TestEmbedBatch_ExactlyMaxBatchSize(t *testing.T) {
 }
 
 func TestEmbedBatch_SplitsAtBoundary(t *testing.T) {
-	ctx := context.Background()
 	calls := 0
-	chunks := makeChunks(150)
-
-	result, err := embedBatchWith(ctx, chunks, func(s, e int) ([][]float32, error) {
+	e := newTestEmbedder(func(batchSize int) ([][]float32, error) {
 		calls++
-		return makeVecs(e-s, 0), nil
+		return makeVecs(batchSize, 0), nil
 	})
 
+	result, err := e.EmbedBatch(context.Background(), makeChunks(150))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -265,18 +240,17 @@ func TestEmbedBatch_SplitsAtBoundary(t *testing.T) {
 }
 
 func TestEmbedBatch_PreservesOrder(t *testing.T) {
-	ctx := context.Background()
-	chunks := makeChunks(150)
-
-	result, err := embedBatchWith(ctx, chunks, func(s, e int) ([][]float32, error) {
-		// Each chunk gets a vector whose first element equals its global index
-		vecs := make([][]float32, e-s)
+	var globalIdx int
+	e := newTestEmbedder(func(batchSize int) ([][]float32, error) {
+		vecs := make([][]float32, batchSize)
 		for i := range vecs {
-			vecs[i] = []float32{float32(s + i)}
+			vecs[i] = []float32{float32(globalIdx)}
+			globalIdx++
 		}
 		return vecs, nil
 	})
 
+	result, err := e.EmbedBatch(context.Background(), makeChunks(150))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -284,5 +258,33 @@ func TestEmbedBatch_PreservesOrder(t *testing.T) {
 		if vec[0] != float32(i) {
 			t.Fatalf("result[%d] has value %v, want %v", i, vec[0], float32(i))
 		}
+	}
+}
+
+// TestEmbedBatch_CardinalityMismatch ensures EmbedBatch fails fast if the
+// underlying embed call returns fewer vectors than inputs, so partial results
+// never leak to callers that might commit them.
+func TestEmbedBatch_CardinalityMismatch(t *testing.T) {
+	e := newTestEmbedder(func(batchSize int) ([][]float32, error) {
+		return makeVecs(batchSize-1, 0), nil // one short on purpose
+	})
+
+	_, err := e.EmbedBatch(context.Background(), makeChunks(10))
+	if err == nil {
+		t.Fatal("expected cardinality mismatch error, got nil")
+	}
+}
+
+// TestEmbedBatch_PropagatesError ensures a transport error bubbles up without
+// retry masking (retries are exercised separately by embed() unit tests).
+func TestEmbedBatch_PropagatesError(t *testing.T) {
+	boom := errors.New("boom")
+	e := newTestEmbedder(func(batchSize int) ([][]float32, error) {
+		return nil, boom
+	})
+
+	_, err := e.EmbedBatch(context.Background(), makeChunks(5))
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected errors.Is(err, boom), got %v", err)
 	}
 }

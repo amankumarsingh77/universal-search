@@ -23,6 +23,9 @@ const (
 	maxDelay     = 60 * time.Second
 
 	maxBatchSize = 100
+
+	taskTypeRetrievalDocument = "RETRIEVAL_DOCUMENT"
+	taskTypeRetrievalQuery    = "RETRIEVAL_QUERY"
 )
 
 // ChunkInput represents one chunk to embed in a batch call.
@@ -33,12 +36,32 @@ type ChunkInput struct {
 	Data     []byte // non-empty for binary chunks
 }
 
+// embedFunc is the low-level hook that performs a single EmbedContent API
+// call. The real implementation delegates to the genai SDK; tests replace it
+// with a fake to drive (*Embedder).EmbedBatch without a network client.
+type embedFunc func(ctx context.Context, model string, contents []*genai.Content, config *genai.EmbedContentConfig) ([][]float32, error)
+
 type Embedder struct {
-	client  *genai.Client
-	model   string
-	dims    int32
-	limiter *RateLimiter
-	logger  *slog.Logger
+	client   *genai.Client
+	embedFn  embedFunc
+	model    string
+	dims     int32
+	limiter  *RateLimiter
+	logger   *slog.Logger
+}
+
+func defaultEmbedFn(client *genai.Client) embedFunc {
+	return func(ctx context.Context, model string, contents []*genai.Content, config *genai.EmbedContentConfig) ([][]float32, error) {
+		resp, err := client.Models.EmbedContent(ctx, model, contents, config)
+		if err != nil {
+			return nil, err
+		}
+		result := make([][]float32, len(resp.Embeddings))
+		for i, emb := range resp.Embeddings {
+			result[i] = emb.Values
+		}
+		return result, nil
+	}
 }
 
 func NewEmbedder(apiKey string, dims int32, logger *slog.Logger) (*Embedder, error) {
@@ -55,13 +78,15 @@ func NewEmbedder(apiKey string, dims int32, logger *slog.Logger) (*Embedder, err
 	}
 
 	log.Info("embedder ready")
-	return &Embedder{
+	e := &Embedder{
 		client:  client,
 		model:   DefaultModel,
 		dims:    dims,
 		limiter: NewRateLimiter(defaultRateLimit, defaultRateWindow),
 		logger:  log,
-	}, nil
+	}
+	e.embedFn = defaultEmbedFn(client)
+	return e, nil
 }
 
 func NewEmbedderFromEnv(dims int32, logger *slog.Logger) (*Embedder, error) {
@@ -104,9 +129,10 @@ func parseRetryAfter(err error) time.Duration {
 	return 0
 }
 
-func (e *Embedder) embed(ctx context.Context, contents []*genai.Content) ([][]float32, error) {
+func (e *Embedder) embed(ctx context.Context, contents []*genai.Content, taskType string) ([][]float32, error) {
 	config := &genai.EmbedContentConfig{
 		OutputDimensionality: genai.Ptr(e.dims),
+		TaskType:             taskType,
 	}
 
 	delay := initialDelay
@@ -117,12 +143,8 @@ func (e *Embedder) embed(ctx context.Context, contents []*genai.Content) ([][]fl
 			return nil, err
 		}
 
-		resp, err := e.client.Models.EmbedContent(ctx, e.model, contents, config)
+		result, err := e.embedFn(ctx, e.model, contents, config)
 		if err == nil {
-			result := make([][]float32, len(resp.Embeddings))
-			for i, emb := range resp.Embeddings {
-				result[i] = emb.Values
-			}
 			return result, nil
 		}
 
@@ -174,8 +196,8 @@ func (e *Embedder) embed(ctx context.Context, contents []*genai.Content) ([][]fl
 	return nil, fmt.Errorf("embedder: all %d retries exhausted: %w", maxRetries, lastErr)
 }
 
-func (e *Embedder) embedOne(ctx context.Context, contents []*genai.Content) ([]float32, error) {
-	result, err := e.embed(ctx, contents)
+func (e *Embedder) embedOne(ctx context.Context, contents []*genai.Content, taskType string) ([]float32, error) {
+	result, err := e.embed(ctx, contents, taskType)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +217,7 @@ func (e *Embedder) Limiter() *RateLimiter {
 func (e *Embedder) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
 	instructed := fmt.Sprintf("task: search result | query: %s", query)
 	content := genai.NewContentFromText(instructed, genai.RoleUser)
-	return e.embedOne(ctx, []*genai.Content{content})
+	return e.embedOne(ctx, []*genai.Content{content}, taskTypeRetrievalQuery)
 }
 
 // EmbedDocumentWithTitle embeds a text document with a title using the inline
@@ -203,7 +225,7 @@ func (e *Embedder) EmbedQuery(ctx context.Context, query string) ([]float32, err
 func (e *Embedder) EmbedDocumentWithTitle(ctx context.Context, title, text string) ([]float32, error) {
 	instructed := fmt.Sprintf("title: %s | text: %s", title, text)
 	content := genai.NewContentFromText(instructed, genai.RoleUser)
-	return e.embedOne(ctx, []*genai.Content{content})
+	return e.embedOne(ctx, []*genai.Content{content}, taskTypeRetrievalDocument)
 }
 
 // EmbedBytes embeds binary content (image, video, audio) with a document
@@ -215,7 +237,7 @@ func (e *Embedder) EmbedBytes(ctx context.Context, data []byte, mimeType, title 
 	instruction := genai.NewPartFromText(fmt.Sprintf("title: %s | text: embedded media", title))
 	media := genai.NewPartFromBytes(data, mimeType)
 	content := genai.NewContentFromParts([]*genai.Part{instruction, media}, genai.RoleUser)
-	return e.embedOne(ctx, []*genai.Content{content})
+	return e.embedOne(ctx, []*genai.Content{content}, taskTypeRetrievalDocument)
 }
 
 // EmbedBatch embeds multiple chunks in batched API calls (up to maxBatchSize per call).
@@ -242,9 +264,12 @@ func (e *Embedder) EmbedBatch(ctx context.Context, chunks []ChunkInput) ([][]flo
 				contents[i] = genai.NewContentFromText(instructed, genai.RoleUser)
 			}
 		}
-		vecs, err := e.embed(ctx, contents)
+		vecs, err := e.embed(ctx, contents, taskTypeRetrievalDocument)
 		if err != nil {
 			return nil, err
+		}
+		if len(vecs) != len(batch) {
+			return nil, fmt.Errorf("embedder: EmbedBatch cardinality mismatch: sent %d inputs, got %d vectors", len(batch), len(vecs))
 		}
 		result = append(result, vecs...)
 	}

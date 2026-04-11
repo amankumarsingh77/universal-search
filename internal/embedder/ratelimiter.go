@@ -86,17 +86,23 @@ func (rl *RateLimiter) WaitIfPaused(ctx context.Context) error {
 	}
 }
 
-// Wait blocks until a request is allowed by the rate limiter or ctx is cancelled.
+// Wait blocks until a request is both un-paused and admitted by the rate
+// limiter, or ctx is cancelled. The pause check runs inside the admission loop
+// so a PauseUntil() call that lands after an earlier precheck still gates
+// subsequent Allow() attempts — without this, a worker could sneak a request
+// through during a shared backoff window.
 func (rl *RateLimiter) Wait(ctx context.Context) error {
-	if err := rl.WaitIfPaused(ctx); err != nil {
-		return err
-	}
-	for !rl.Allow() {
+	for {
+		if err := rl.WaitIfPaused(ctx); err != nil {
+			return err
+		}
+		if rl.Allow() {
+			return nil
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-	return nil
 }

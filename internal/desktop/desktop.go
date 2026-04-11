@@ -18,6 +18,7 @@ type AppController interface {
 	ReindexNow()
 	EmitEvent(name string)
 	Quit()
+	GetHotkeyString() string
 }
 
 // SettingsStore is what the hotkey manager needs for persistence.

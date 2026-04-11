@@ -608,6 +608,16 @@ func (a *App) SetSetting(key, value string) error {
 	return a.store.SetSetting(key, value)
 }
 
+// GetHotkeyString returns the current global hotkey as a human-readable string (e.g. "⌘⇧Space").
+func (a *App) GetHotkeyString() string {
+	combo, _ := a.store.GetSetting("global_hotkey", desktop.DefaultHotkey())
+	mods, key, err := desktop.ParseHotkey(combo)
+	if err != nil {
+		return combo
+	}
+	return desktop.HumanReadableHotkey(mods, key)
+}
+
 // SetGeminiAPIKey validates the supplied Gemini API key by making a real test
 // embed call, then — if valid — persists it to the settings store and hot-swaps
 // the live embedder and indexing pipeline. Returns a non-nil error on any failure;

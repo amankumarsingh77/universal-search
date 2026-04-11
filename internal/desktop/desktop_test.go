@@ -118,6 +118,39 @@ func TestParseHotkey_FunctionKeys(t *testing.T) {
 	}
 }
 
+func TestHumanReadableHotkey_CmdShiftSpace(t *testing.T) {
+	mods, key, err := ParseHotkey("cmd+shift+space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := HumanReadableHotkey(mods, key)
+	if got != "⌘⇧Space" {
+		t.Errorf("expected ⌘⇧Space, got %q", got)
+	}
+}
+
+func TestHumanReadableHotkey_CtrlShiftA(t *testing.T) {
+	mods, key, err := ParseHotkey("ctrl+shift+a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := HumanReadableHotkey(mods, key)
+	if got != "⌃⇧A" {
+		t.Errorf("expected ⌃⇧A, got %q", got)
+	}
+}
+
+func TestHumanReadableHotkey_AltF1(t *testing.T) {
+	mods, key, err := ParseHotkey("alt+f1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := HumanReadableHotkey(mods, key)
+	if got != "⌥F1" {
+		t.Errorf("expected ⌥F1, got %q", got)
+	}
+}
+
 func TestParseHotkey_CaseInsensitive(t *testing.T) {
 	mods, key, err := ParseHotkey("CMD+SPACE")
 	if err != nil {

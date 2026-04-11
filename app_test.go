@@ -216,6 +216,29 @@ func newTestPipeline(t *testing.T, s *store.Store) *indexer.Pipeline {
 	return p
 }
 
+// TestGetHotkeyString_ReturnsNonEmpty verifies that GetHotkeyString returns a
+// non-empty string when the store has no saved hotkey (uses the platform default).
+func TestGetHotkeyString_ReturnsNonEmpty(t *testing.T) {
+	a := newTestApp(t)
+	got := a.GetHotkeyString()
+	if got == "" {
+		t.Fatal("GetHotkeyString returned empty string")
+	}
+}
+
+// TestGetHotkeyString_CustomHotkey verifies that a stored hotkey is reflected in the output.
+func TestGetHotkeyString_CustomHotkey(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.store.SetSetting("global_hotkey", "ctrl+shift+space"); err != nil {
+		t.Fatal(err)
+	}
+	got := a.GetHotkeyString()
+	// ctrl+shift+space should produce ⌃⇧Space
+	if got != "⌃⇧Space" {
+		t.Errorf("expected ⌃⇧Space, got %q", got)
+	}
+}
+
 // TestReindexFolder_NilStore — REQ-001
 // When the store is nil ReindexFolder must return without panicking.
 func TestReindexFolder_NilStore(t *testing.T) {

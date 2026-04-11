@@ -34,7 +34,8 @@ func (t *TrayManager) Stop() {
 func (t *TrayManager) onReady() {
 	systray.SetIcon(t.icon)
 	systray.SetTitle("Universal Search")
-	systray.SetTooltip("Universal Search")
+	hotkeyStr := t.app.GetHotkeyString()
+	systray.SetTooltip("Universal Search — " + hotkeyStr)
 
 	showHide := systray.AddMenuItem("Show/Hide", "Toggle search window")
 	systray.AddSeparator()

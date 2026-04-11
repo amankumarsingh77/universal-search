@@ -9,7 +9,7 @@ import Toast from './components/Toast';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
-import { OpenFile, OpenFolder, HideWindow, GetFolders } from '../wailsjs/go/main/App';
+import { OpenFile, OpenFolder, HideWindow, GetFolders, GetHasGeminiKey } from '../wailsjs/go/main/App';
 
 function App() {
   const {
@@ -36,11 +36,13 @@ function App() {
 
   const [showFolderManager, setShowFolderManager] = useState(false);
   const [hasFolders, setHasFolders] = useState(true);
+  const [hasApiKey, setHasApiKey] = useState(true);
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
     GetFolders().then(folders => setHasFolders(folders.length > 0));
+    GetHasGeminiKey().then(setHasApiKey).catch(() => setHasApiKey(false));
   }, []);
 
   useEffect(() => {
@@ -138,8 +140,10 @@ function App() {
           onSelect={setSelectedIndex}
           onOpen={(path) => { OpenFile(path); HideWindow(); }}
           hasFolders={hasFolders}
+          hasApiKey={hasApiKey}
           query={query}
           onAddFolder={() => setShowFolderManager(true)}
+          onSetApiKey={() => setShowApiKeyDialog(true)}
         />
         <PreviewPanel result={selectedResult} onOpenFolder={(path) => { OpenFolder(path); HideWindow(); }} />
       </div>
@@ -155,7 +159,7 @@ function App() {
       {showApiKeyDialog && (
         <ApiKeyDialog
           onClose={() => setShowApiKeyDialog(false)}
-          onSuccess={() => setToast({ message: 'Gemini client initialized successfully', type: 'success' })}
+          onSuccess={() => { setHasApiKey(true); setToast({ message: 'Gemini client initialized successfully', type: 'success' }); }}
           onError={(msg) => setToast({ message: msg, type: 'error' })}
         />
       )}

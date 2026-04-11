@@ -36,11 +36,11 @@ export namespace main {
 	    startTime: number;
 	    endTime: number;
 	    score: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SearchResultDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.filePath = source["filePath"];

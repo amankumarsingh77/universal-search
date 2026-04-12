@@ -9,9 +9,8 @@ import (
 )
 
 // New creates a structured logger with dual output:
-//   - Colored text to stderr at Debug level when UNIVERSAL_SEARCH_DEBUG_STDERR=1,
-//     otherwise at Info level (production default).
-//   - JSON to a rotated log file at Debug level (for troubleshooting).
+//   - Colored text to stderr at Info level (for terminal)
+//   - JSON to a rotated log file at Debug level (for troubleshooting)
 //
 // The log file is written to <dataDir>/universal-search.log with rotation:
 // 50 MB max size, 3 backups, 28 days retention, gzip compression.
@@ -24,13 +23,8 @@ func New(dataDir string) *slog.Logger {
 		Compress:   true,
 	}
 
-	termLevel := slog.LevelInfo
-	if os.Getenv("UNIVERSAL_SEARCH_DEBUG_STDERR") == "1" {
-		termLevel = slog.LevelDebug
-	}
-
 	termHandler := NewColorHandler(os.Stderr, &slog.HandlerOptions{
-		Level: termLevel,
+		Level: slog.LevelDebug,
 	})
 
 	fileHandler := slog.NewJSONHandler(fileWriter, &slog.HandlerOptions{

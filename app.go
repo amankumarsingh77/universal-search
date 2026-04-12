@@ -242,16 +242,6 @@ func (a *App) startup(ctx context.Context) {
 		log.Error("failed to start file watcher", "error", err)
 	}
 
-	// Listen for add-folder requests from the frontend.
-	runtime.EventsOn(ctx, "add-folder-request", func(optionalData ...interface{}) {
-		dir, err := runtime.OpenDirectoryDialog(ctx, runtime.OpenDialogOptions{
-			Title: "Select folder to index",
-		})
-		if err == nil && dir != "" {
-			a.AddFolder(dir)
-			runtime.EventsEmit(ctx, "folders-changed")
-		}
-	})
 
 	a.tray = desktop.NewTrayManager(a, a.trayIcon, log)
 	a.tray.Start()
@@ -478,6 +468,32 @@ func countIndexableFiles(folders []string, excludePatterns []string) int {
 		})
 	}
 	return total
+}
+
+// PickAndAddFolder opens the native directory picker and, if the user chooses
+// a folder, runs the same logic as AddFolder. Returning the selected path (or
+// an empty string if the user cancelled) lets the frontend await the entire
+// dialog lifetime, which is what the blur-to-hide suppression relies on — an
+// event-based flow would race the modal picker and close it along with the
+// parent window when focus leaves.
+func (a *App) PickAndAddFolder() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app context not initialized")
+	}
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select folder to index",
+	})
+	if err != nil {
+		return "", err
+	}
+	if dir == "" {
+		return "", nil
+	}
+	if err := a.AddFolder(dir); err != nil {
+		return "", err
+	}
+	runtime.EventsEmit(a.ctx, "folders-changed")
+	return dir, nil
 }
 
 // AddFolder adds a folder to the indexed folders list, starts watching it,

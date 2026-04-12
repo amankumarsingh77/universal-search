@@ -9,6 +9,7 @@ import Toast from './components/Toast';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
+import { useHideSuppression } from './hooks/useHideSuppression';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
 import { OpenFile, OpenFolder, HideWindow, GetFolders, GetHasGeminiKey, GetOnboarded, MarkOnboarded } from '../wailsjs/go/main/App';
 
@@ -134,11 +135,19 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
+  const { isSuppressed } = useHideSuppression();
   useEffect(() => {
-    const handleBlur = () => HideWindow();
+    // Skip the auto-hide while a native OS dialog (e.g. directory picker) is
+    // open. The dialog steals focus, fires blur on the Wails window, and then
+    // the modal sheet gets dismissed along with its now-hidden parent —
+    // exactly the bug users reported with "Add folder".
+    const handleBlur = () => {
+      if (isSuppressed()) return;
+      HideWindow();
+    };
     window.addEventListener('blur', handleBlur);
     return () => window.removeEventListener('blur', handleBlur);
-  }, []);
+  }, [isSuppressed]);
 
   return (
     <div style={styles.root}>

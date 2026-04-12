@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { GetFolders, RemoveFolder, AddIgnoredFolder, GetIgnoredFolders, RemoveIgnoredFolder, ReindexFolder } from '../../wailsjs/go/main/App';
-import { EventsEmit, EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
+import { GetFolders, RemoveFolder, AddIgnoredFolder, GetIgnoredFolders, RemoveIgnoredFolder, ReindexFolder, PickAndAddFolder } from '../../wailsjs/go/main/App';
+import { EventsOn, EventsOff } from '../../wailsjs/runtime/runtime';
+import { useHideSuppression } from '../hooks/useHideSuppression';
 
 interface FolderManagerProps {
   onClose: () => void;
@@ -23,6 +24,8 @@ export function FolderManager({ onClose }: FolderManagerProps) {
   const [ignoredPatterns, setIgnoredPatterns] = useState<string[]>([]);
   const [newPattern, setNewPattern] = useState('');
   const [reindexingFolder, setReindexingFolder] = useState<string | null>(null);
+  const [pickingFolder, setPickingFolder] = useState(false);
+  const { withSuppressedHide } = useHideSuppression();
 
   const loadFolders = useCallback(async () => {
     try {
@@ -59,8 +62,16 @@ export function FolderManager({ onClose }: FolderManagerProps) {
     loadIgnoredPatterns();
   }, [loadIgnoredPatterns]);
 
-  const handleAddFolder = () => {
-    EventsEmit('add-folder-request');
+  const handleAddFolder = async () => {
+    if (pickingFolder) return;
+    setPickingFolder(true);
+    try {
+      await withSuppressedHide(() => PickAndAddFolder());
+    } catch (err) {
+      console.error('Failed to add folder:', err);
+    } finally {
+      setPickingFolder(false);
+    }
   };
 
   const handleRemove = async (path: string, deleteData: boolean) => {
@@ -232,8 +243,8 @@ export function FolderManager({ onClose }: FolderManagerProps) {
 
         {activeTab === 'indexed' && (
           <div style={styles.footer}>
-            <button style={styles.addBtn} onClick={handleAddFolder}>
-              + Add Folder
+            <button style={styles.addBtn} onClick={handleAddFolder} disabled={pickingFolder}>
+              {pickingFolder ? 'Opening…' : '+ Add Folder'}
             </button>
           </div>
         )}

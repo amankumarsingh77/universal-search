@@ -46,6 +46,8 @@ export function ParseQuery(arg1:string):Promise<main.ParseQueryResult>;
 
 export function PauseIndexing():Promise<void>;
 
+export function PickAndAddFolder():Promise<string>;
+
 export function PreEmbedQuery(arg1:string):Promise<void>;
 
 export function Quit():Promise<void>;

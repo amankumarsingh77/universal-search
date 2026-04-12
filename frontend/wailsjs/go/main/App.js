@@ -90,6 +90,10 @@ export function PauseIndexing() {
   return window['go']['main']['App']['PauseIndexing']();
 }
 
+export function PickAndAddFolder() {
+  return window['go']['main']['App']['PickAndAddFolder']();
+}
+
 export function PreEmbedQuery(arg1) {
   return window['go']['main']['App']['PreEmbedQuery'](arg1);
 }

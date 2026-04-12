@@ -6,6 +6,7 @@ export namespace main {
 	    op: string;
 	    value: string;
 	    clauseKey: string;
+	    clauseType: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ChipDTO(source);
@@ -18,6 +19,7 @@ export namespace main {
 	        this.op = source["op"];
 	        this.value = source["value"];
 	        this.clauseKey = source["clauseKey"];
+	        this.clauseType = source["clauseType"];
 	    }
 	}
 	export class IndexStatusDTO {
@@ -94,6 +96,7 @@ export namespace main {
 	    startTime: number;
 	    endTime: number;
 	    score: number;
+	    modifiedAt: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new SearchResultDTO(source);
@@ -110,6 +113,7 @@ export namespace main {
 	        this.startTime = source["startTime"];
 	        this.endTime = source["endTime"];
 	        this.score = source["score"];
+	        this.modifiedAt = source["modifiedAt"];
 	    }
 	}
 	export class SearchWithFiltersResult {

@@ -103,15 +103,17 @@ type SearchResultDTO struct {
 	StartTime     float64 `json:"startTime"`
 	EndTime       float64 `json:"endTime"`
 	Score         float32 `json:"score"`
+	ModifiedAt    int64   `json:"modifiedAt"` // Unix timestamp seconds
 }
 
 // ChipDTO represents a single parsed query filter chip for the frontend.
 type ChipDTO struct {
-	Label     string `json:"label"`
-	Field     string `json:"field"`
-	Op        string `json:"op"`
-	Value     string `json:"value"`     // human-readable string representation
-	ClauseKey string `json:"clauseKey"` // serialized "field|op|value" for denylist
+	Label      string `json:"label"`
+	Field      string `json:"field"`
+	Op         string `json:"op"`
+	Value      string `json:"value"`      // human-readable string representation
+	ClauseKey  string `json:"clauseKey"`  // serialized "field|op|value" for denylist
+	ClauseType string `json:"clauseType"` // "must" | "must_not" | "should"
 }
 
 // ParseQueryResult is the result of parsing a query into structured filters.
@@ -976,7 +978,13 @@ func (a *App) ParseQuery(raw string) (ParseQueryResult, error) {
 		if cached, err := a.parsedQueryCache.Get(raw); err == nil && cached != nil {
 			mergedSpec = *cached
 			cacheHit = true
-			a.logger.Debug("parse_query: cache hit", "normalized_key", query.NormalizeKey(raw))
+			a.logger.Debug("parse_query: cache hit",
+				"normalized_key", query.NormalizeKey(raw),
+				"must", len(mergedSpec.Must),
+				"must_not", len(mergedSpec.MustNot),
+				"should", len(mergedSpec.Should),
+				"source", mergedSpec.Source,
+			)
 		}
 	}
 
@@ -995,7 +1003,7 @@ func (a *App) ParseQuery(raw string) (ParseQueryResult, error) {
 			"trigger_result", query.ShouldInvokeLLM(grammarSpec.SemanticQuery),
 		)
 		if shouldInvoke {
-			ctx, cancel := context.WithTimeout(a.ctx, 500*time.Millisecond)
+			ctx, cancel := context.WithTimeout(a.ctx, 2000*time.Millisecond)
 			defer cancel()
 			llmStart := time.Now()
 			a.logger.Debug("parse_query: invoking LLM parser")
@@ -1187,6 +1195,7 @@ func (a *App) searchFilenameOnly(queryText string) (SearchWithFiltersResult, err
 			SizeBytes:     f.SizeBytes,
 			ThumbnailPath: f.ThumbnailPath,
 			Score:         0,
+			ModifiedAt:    f.ModifiedAt.Unix(),
 		})
 	}
 	return SearchWithFiltersResult{Results: dtos}, nil
@@ -1231,6 +1240,7 @@ func toSearchResultDTO(r store.SearchResult) SearchResultDTO {
 		StartTime:     r.StartTime,
 		EndTime:       r.EndTime,
 		Score:         1 - r.Distance/2,
+		ModifiedAt:    r.File.ModifiedAt.Unix(),
 	}
 }
 
@@ -1258,17 +1268,17 @@ func parseDenyList(denyList []string) []query.ClauseKey {
 func buildChipDTOs(spec query.FilterSpec) []ChipDTO {
 	var chips []ChipDTO
 	for _, c := range spec.Must {
-		if chip, ok := clauseToChip(c, false); ok {
+		if chip, ok := clauseToChip(c, false, "must"); ok {
 			chips = append(chips, chip)
 		}
 	}
 	for _, c := range spec.MustNot {
-		if chip, ok := clauseToChip(c, true); ok {
+		if chip, ok := clauseToChip(c, true, "must_not"); ok {
 			chips = append(chips, chip)
 		}
 	}
 	for _, c := range spec.Should {
-		if chip, ok := clauseToChip(c, false); ok {
+		if chip, ok := clauseToChip(c, false, "should"); ok {
 			chips = append(chips, chip)
 		}
 	}
@@ -1276,7 +1286,7 @@ func buildChipDTOs(spec query.FilterSpec) []ChipDTO {
 }
 
 // clauseToChip converts a single Clause to a ChipDTO with a human-readable label.
-func clauseToChip(c query.Clause, negate bool) (ChipDTO, bool) {
+func clauseToChip(c query.Clause, negate bool, clauseType string) (ChipDTO, bool) {
 	var label, valueStr string
 
 	switch c.Field {
@@ -1315,11 +1325,18 @@ func clauseToChip(c query.Clause, negate bool) (ChipDTO, bool) {
 		label = fmt.Sprintf("%s %s", opStr, formatBytes(bytes))
 
 	case query.FieldModifiedAt:
-		t, ok := c.Value.(time.Time)
-		if !ok {
+		var t time.Time
+		switch v := c.Value.(type) {
+		case time.Time:
+			t = v
+		case int64:
+			t = time.Unix(v, 0)
+		case int:
+			t = time.Unix(int64(v), 0)
+		default:
 			return ChipDTO{}, false
 		}
-		valueStr = t.Format("2006-01-02")
+		valueStr = fmt.Sprintf("%d", t.Unix())
 		switch c.Op {
 		case query.OpGte, query.OpGt:
 			label = "Since " + t.Format("Jan 2")
@@ -1353,11 +1370,12 @@ func clauseToChip(c query.Clause, negate bool) (ChipDTO, bool) {
 	clauseKey := fmt.Sprintf("%s|%s|%s", c.Field, c.Op, valueStr)
 
 	return ChipDTO{
-		Label:     label,
-		Field:     string(c.Field),
-		Op:        string(c.Op),
-		Value:     valueStr,
-		ClauseKey: clauseKey,
+		Label:      label,
+		Field:      string(c.Field),
+		Op:         string(c.Op),
+		Value:      valueStr,
+		ClauseKey:  clauseKey,
+		ClauseType: clauseType,
 	}, true
 }
 

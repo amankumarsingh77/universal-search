@@ -1,13 +1,16 @@
 import { useReducer, useState, useEffect, useRef, useCallback } from 'react';
-import { Search, PreEmbedQuery, ParseQuery, SearchWithFilters } from '../../wailsjs/go/main/App';
+import { PreEmbedQuery, ParseQuery, SearchWithFilters } from '../../wailsjs/go/main/App';
 import { main } from '../../wailsjs/go/models';
 import {
   searchReducer,
   initialSearchState,
   type ChipDTO,
 } from '../state/searchReducer';
+import { applyClientSideFilters } from '../utils/filterResults';
 
 export type SearchResultDTO = main.SearchResultDTO;
+
+const CLIENT_FILTER_MIN_RESULTS = 5;
 
 export function useSearch() {
   const [nlState, dispatch] = useReducer(searchReducer, initialSearchState);
@@ -22,47 +25,83 @@ export function useSearch() {
   const preEmbedRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchSeqRef = useRef(0);
+
   // Track current phase outside reducer to avoid stale closure issues
   const phaseRef = useRef(nlState.phase);
   phaseRef.current = nlState.phase;
+
+  // Holds the raw unfiltered results from the last server fetch.
+  // Used for client-side filtering when chips arrive without re-querying the server.
+  const unfilteredResultsRef = useRef<SearchResultDTO[]>([]);
+  // The semanticQuery that was used for the last server fetch embedding.
+  const lastSemanticQueryRef = useRef<string>('');
 
   const performSearch = useCallback(async (
     q: string,
     semanticQuery: string,
     chips: ChipDTO[],
     denyList: string[],
+    options: { chipTriggered?: boolean } = {},
   ) => {
     if (!q.trim()) {
+      unfilteredResultsRef.current = [];
+      lastSemanticQueryRef.current = '';
       setResults([]);
       setSelectedIndex(0);
       setIsSearching(false);
       return;
     }
 
+    const { chipTriggered = false } = options;
+
+    // Client-side filter path: chips just arrived after the initial search.
+    // Try to filter the already-fetched results in-memory to avoid a server round-trip.
+    if (chipTriggered && unfilteredResultsRef.current.length > 0) {
+      const semanticChanged =
+        semanticQuery !== '' && semanticQuery !== lastSemanticQueryRef.current;
+
+      if (!semanticChanged) {
+        const filtered = applyClientSideFilters(
+          unfilteredResultsRef.current,
+          chips,
+          denyList,
+        );
+        if (filtered.length >= CLIENT_FILTER_MIN_RESULTS) {
+          // Enough results — use the client-filtered set, skip server call.
+          setResults(filtered);
+          setSelectedIndex(0);
+          return;
+        }
+        // Too few results after filtering — fall through to server call so
+        // the planner can retrieve more results with proper filter pushdown.
+      }
+      // semanticQuery changed — need new HNSW embedding, fall through to server.
+    }
+
+    // Full server call path
     setIsSearching(true);
     setError(null);
 
     const seq = ++searchSeqRef.current;
 
     try {
-      let res: SearchResultDTO[];
-      if (chips.length > 0 || denyList.length > 0) {
-        const withFilters = await SearchWithFilters(q, semanticQuery, denyList);
-        res = withFilters?.results || [];
-        if (withFilters?.relaxationBanner) {
-          dispatch({ type: 'BANNER_SET', payload: withFilters.relaxationBanner });
-        }
-      } else {
-        res = await Search(q);
+      const withFilters = await SearchWithFilters(q, semanticQuery, denyList);
+      const res = withFilters?.results || [];
+      if (withFilters?.relaxationBanner) {
+        dispatch({ type: 'BANNER_SET', payload: withFilters.relaxationBanner });
       }
 
       if (seq !== searchSeqRef.current) return;
-      setResults(res || []);
+
+      lastSemanticQueryRef.current = semanticQuery;
+      unfilteredResultsRef.current = res;
+      setResults(res);
       setSelectedIndex(0);
     } catch (err) {
       if (seq !== searchSeqRef.current) return;
       setError(err instanceof Error ? err.message : String(err));
       setResults([]);
+      unfilteredResultsRef.current = [];
     } finally {
       if (seq === searchSeqRef.current) {
         setIsSearching(false);
@@ -104,6 +143,10 @@ export function useSearch() {
     if (preEmbedRef.current) clearTimeout(preEmbedRef.current);
     if (parseTimerRef.current) clearTimeout(parseTimerRef.current);
 
+    // Clear stale unfiltered results from a previous query
+    unfilteredResultsRef.current = [];
+    lastSemanticQueryRef.current = '';
+
     if (q.trim().length >= 3) {
       preEmbedRef.current = setTimeout(() => {
         PreEmbedQuery(q).catch(() => {});
@@ -120,7 +163,7 @@ export function useSearch() {
       }, 800);
     }
 
-    // 300ms debounce for search
+    // 300ms debounce for search — always a full server call (no chips yet)
     debounceRef.current = setTimeout(() => {
       performSearch(q, nlState.semanticQuery, nlState.chips, nlState.chipDenyList);
     }, 300);
@@ -133,10 +176,16 @@ export function useSearch() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nlState.raw]);
 
-  // Re-run search when chips/denyList change (user dismissed a chip)
+  // Re-run search when chips/denyList change — try client-side filter first
   useEffect(() => {
     if (nlState.raw.trim()) {
-      performSearch(nlState.raw, nlState.semanticQuery, nlState.chips, nlState.chipDenyList);
+      performSearch(
+        nlState.raw,
+        nlState.semanticQuery,
+        nlState.chips,
+        nlState.chipDenyList,
+        { chipTriggered: true },
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nlState.chips, nlState.chipDenyList]);

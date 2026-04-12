@@ -24,7 +24,7 @@ func New(dataDir string) *slog.Logger {
 	}
 
 	termHandler := NewColorHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: slog.LevelDebug,
 	})
 
 	fileHandler := slog.NewJSONHandler(fileWriter, &slog.HandlerOptions{

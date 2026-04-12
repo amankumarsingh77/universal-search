@@ -55,6 +55,10 @@ func (m *mockPlannerStore) GetChunksByVectorIDs(vectorIDs []string) ([]store.Sea
 	return nil, nil
 }
 
+func (m *mockPlannerStore) GetFilesByIDs(ids []int64) ([]store.FileRecord, error) {
+	return nil, nil
+}
+
 func (m *mockPlannerStore) CountFiles() (int, error) {
 	return len(m.files), nil
 }

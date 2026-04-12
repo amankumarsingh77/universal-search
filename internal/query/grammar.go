@@ -204,7 +204,7 @@ func parseDateOp(direction, value string, now time.Time) ([]Clause, string, bool
 	if value == "" {
 		return nil, "", false
 	}
-	afterT, beforeT, ok := NormalizeDate(value, now)
+	afterT, _, ok := NormalizeDate(value, now)
 	if !ok {
 		return nil, direction + ":" + value, false
 	}
@@ -212,10 +212,11 @@ func parseDateOp(direction, value string, now time.Time) ([]Clause, string, bool
 	var clauses []Clause
 	switch direction {
 	case "before":
-		// modified_at < beforeT (use afterT as the threshold since NormalizeDate returns start-of-day)
+		// modified_at < start-of-day (afterT is the start-of-day boundary)
 		clauses = append(clauses, Clause{Field: FieldModifiedAt, Op: OpLt, Value: afterT})
 	case "after":
-		clauses = append(clauses, Clause{Field: FieldModifiedAt, Op: OpGte, Value: beforeT})
+		// modified_at >= start-of-day (afterT is the start-of-day boundary, includes the full day)
+		clauses = append(clauses, Clause{Field: FieldModifiedAt, Op: OpGte, Value: afterT})
 	}
 	return clauses, "", true
 }

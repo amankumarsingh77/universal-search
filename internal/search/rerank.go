@@ -66,14 +66,24 @@ func hasModifiedAtMust(must []query.Clause) bool {
 
 // fileInDateMustRange returns true if the file's ModifiedAt satisfies all
 // FieldModifiedAt Must clauses in the spec.
+// Clause values may be time.Time (grammar path) or int64 Unix seconds (LLM path).
 func fileInDateMustRange(file store.FileRecord, must []query.Clause) bool {
 	for _, c := range must {
 		if c.Field != query.FieldModifiedAt {
 			continue
 		}
-		t, ok := c.Value.(time.Time)
-		if !ok {
-			continue
+		var t time.Time
+		switch v := c.Value.(type) {
+		case time.Time:
+			t = v
+		case int64:
+			t = time.Unix(v, 0)
+		case int:
+			t = time.Unix(int64(v), 0)
+		default:
+			// Unrecognised type — treat as non-match so the recency bonus is not
+			// awarded incorrectly.
+			return false
 		}
 		switch c.Op {
 		case query.OpGte:

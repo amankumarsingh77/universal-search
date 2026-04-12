@@ -38,11 +38,7 @@ func RelaxationLadder(
 	)
 
 	for {
-		var strategy string
-		var count int
-		results, strategy, count, err = planner.Plan(queryVec, current, k)
-		_ = strategy
-		_ = count
+		results, _, _, err = planner.Plan(queryVec, current, k)
 		if err != nil {
 			return nil, droppedDesc, err
 		}
@@ -79,11 +75,7 @@ func RelaxationLadder(
 			SemanticQuery: spec.SemanticQuery,
 			MustNot:       spec.MustNot, // MustNot is never dropped
 		}
-		var strategy string
-		var count int
-		results, strategy, count, err = planner.Plan(queryVec, emptySpec, k)
-		_ = strategy
-		_ = count
+		results, _, _, err = planner.Plan(queryVec, emptySpec, k)
 		if droppedDesc == "" {
 			droppedDesc = "all filters"
 		}

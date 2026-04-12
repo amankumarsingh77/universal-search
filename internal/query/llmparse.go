@@ -121,7 +121,7 @@ Rules:
 	)
 
 	config := &genai.GenerateContentConfig{
-		SystemInstruction: genai.NewContentFromText(systemPrompt, genai.RoleUser),
+		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}},
 		ResponseMIMEType:  "application/json",
 		ResponseSchema:    buildResponseSchema(),
 	}

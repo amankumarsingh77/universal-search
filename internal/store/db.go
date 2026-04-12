@@ -530,6 +530,38 @@ func (s *Store) GetFileByID(id int64) (FileRecord, error) {
 	return f, nil
 }
 
+// GetFilesByIDs returns FileRecords for the given set of file IDs in a single query.
+func (s *Store) GetFilesByIDs(ids []int64) ([]FileRecord, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := s.db.Query(
+		`SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		 FROM files WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get files by ids: %w", err)
+	}
+	defer rows.Close()
+	var files []FileRecord
+	for rows.Next() {
+		var f FileRecord
+		if err := rows.Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
+			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
+}
+
 // GetAllFiles returns every file record in the database.
 // It is used by the startup rescan to detect and remove files that no longer exist on disk.
 func (s *Store) GetAllFiles() ([]FileRecord, error) {

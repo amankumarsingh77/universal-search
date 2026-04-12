@@ -20,6 +20,7 @@ type PlannerStore interface {
 	FilterFileIDs(spec store.FilterSpec) ([]int64, error)
 	GetVectorBlobs(fileIDs []int64) (map[int64][][]float32, error)
 	GetChunksByVectorIDs(vectorIDs []string) ([]store.SearchResult, error)
+	GetFilesByIDs(ids []int64) ([]store.FileRecord, error)
 	CountFiles() (int, error)
 }
 
@@ -91,6 +92,24 @@ func (p *Planner) Plan(queryVec []float32, spec query.FilterSpec, k int) ([]stor
 			return nil, "brute_force", count, err
 		}
 		results := bruteForceCosine(queryVec, blobs, k)
+		// Hydrate results with full file metadata (bruteForceCosine only sets File.ID).
+		rankedIDs := make([]int64, len(results))
+		for i, r := range results {
+			rankedIDs[i] = r.File.ID
+		}
+		fileRecords, err := p.store.GetFilesByIDs(rankedIDs)
+		if err != nil {
+			return nil, "brute_force", count, err
+		}
+		fileMap := make(map[int64]store.FileRecord, len(fileRecords))
+		for _, f := range fileRecords {
+			fileMap[f.ID] = f
+		}
+		for i, r := range results {
+			if f, ok := fileMap[r.File.ID]; ok {
+				results[i].File = f
+			}
+		}
 		p.logger.Debug("planner: brute-force complete", "results", len(results))
 		return results, "brute_force", count, nil
 	}

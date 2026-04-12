@@ -137,7 +137,7 @@ func (e *Engine) SearchWithSpec(queryVec []float32, spec query.FilterSpec, rawQu
 
 	// 2. If zero results and has filters, try relaxation.
 	var droppedDesc string
-	if len(results) == 0 && (len(spec.Must) > 0 || len(spec.MustNot) > 0) {
+	if len(results) == 0 && len(spec.Must) > 0 {
 		results, droppedDesc, err = RelaxationLadder(context.Background(), e.planner, queryVec, spec, k)
 		if err != nil {
 			return SearchWithSpecResult{Strategy: strategy, PlannerCount: plannerCount}, err

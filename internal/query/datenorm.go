@@ -86,7 +86,9 @@ func NormalizeDate(s string, now time.Time) (after, before time.Time, ok bool) {
 		if t.After(now) {
 			t = now
 		}
-		return t, now, true
+		// Normalize to start-of-day for consistency with other branches.
+		start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, now.Location())
+		return start, now, true
 	}
 
 	// -- Try araddon/dateparse for any remaining formats --

@@ -290,13 +290,14 @@ func bruteForceCosine(queryVec []float32, blobs map[int64][][]float32, k int) []
 }
 
 // cosineDist returns the cosine distance between a and b: 1 - cosineSimilarity(a, b).
-// Vectors are assumed to be non-zero. Returns 1.0 if either vector has zero magnitude.
+// Returns 1.0 (maximum distance) if either vector is empty, has zero magnitude,
+// or the two vectors have different dimensions (incompatible embedding models).
 func cosineDist(a, b []float32) float32 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 1.0 // incompatible or degenerate vectors
+	}
 	var dot, magA, magB float64
 	n := len(a)
-	if len(b) < n {
-		n = len(b)
-	}
 	for i := 0; i < n; i++ {
 		dot += float64(a[i]) * float64(b[i])
 		magA += float64(a[i]) * float64(a[i])

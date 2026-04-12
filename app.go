@@ -215,7 +215,8 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 
-	a.engine = search.New(a.store, a.index, a.logger)
+	planner := search.NewPlannerWithLogger(a.store, a.index, a.getBruteForceThreshold(), a.logger.WithGroup("planner"))
+	a.engine = search.NewWithPlanner(a.store, a.index, a.logger, planner)
 
 	// Wire NL query understanding components.
 	a.parsedQueryCache = query.NewParsedQueryCache(a.store)
@@ -869,20 +870,12 @@ func (a *App) isNLQueryEnabled() bool {
 	return val != "false"
 }
 
-// isOfflineMode returns true if no Gemini API key is available (embedder not initialised).
-// It checks the environment variable first, then the settings table.
+// isOfflineMode returns true when embedding is unavailable.
+// The live embedder is the authoritative source of truth: if a.embedder is nil
+// (key missing, invalid, or init failed), we are offline regardless of what the
+// settings table says.
 func (a *App) isOfflineMode() bool {
-	if os.Getenv("GEMINI_API_KEY") != "" {
-		return false
-	}
-	if a.store == nil {
-		return true
-	}
-	apiKey, err := a.store.GetSetting("gemini_api_key", "")
-	if err != nil || apiKey == "" {
-		return true
-	}
-	return false
+	return a.embedder == nil
 }
 
 // getBruteForceThreshold returns the configured brute_force_threshold setting,

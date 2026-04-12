@@ -60,16 +60,27 @@ var knownExtensions = []string{
 
 // CorrectKind returns the canonical kind value for s, tolerating Levenshtein-1 typos.
 // Returns ("", false) if no match within distance 1.
+// When multiple keys tie on distance, the lexicographically smallest key wins
+// so the result is deterministic regardless of map iteration order.
 func CorrectKind(s string) (canonical string, ok bool) {
 	// Direct match first.
-	if v, ok := KnownKindValues[s]; ok {
+	if v, found := KnownKindValues[s]; found {
 		return v, true
 	}
-	// Levenshtein-1 over keys.
+	// Find best Levenshtein-1 match; break ties by lexicographic key order.
+	bestDist := 2 // only accept distance ≤ 1
+	bestKey := ""
+	bestVal := ""
 	for key, val := range KnownKindValues {
-		if Levenshtein(s, key) <= 1 {
-			return val, true
+		d := Levenshtein(s, key)
+		if d < bestDist || (d == bestDist && key < bestKey) {
+			bestDist = d
+			bestKey = key
+			bestVal = val
 		}
+	}
+	if bestDist <= 1 {
+		return bestVal, true
 	}
 	return "", false
 }

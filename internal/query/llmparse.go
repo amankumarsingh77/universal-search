@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -228,8 +229,11 @@ func resolveDateToUnix(s string, op Op) (int64, bool) {
 
 // llmClauseToClause converts an llmClause to a Clause, validating the field.
 // Returns (Clause{}, false) if the field is unknown (NLQ-034).
-// For modified_at fields, the string value is resolved via NormalizeDate into
-// Unix int64 timestamps so clauseToSQL can emit the correct datetime(?) wrapper.
+//
+// Type coercions applied (LLM always returns string values in JSON schema):
+//   - modified_at → int64 Unix seconds (via resolveDateToUnix)
+//   - size_bytes  → int64 bytes (try plain integer, then ParseSize for "10mb" notation)
+//   - extension with op=in_set → []string (comma-split, dot-prefixed)
 func llmClauseToClause(lc llmClause) (Clause, bool) {
 	field := FieldEnum(lc.Field)
 	if !KnownFields[field] {
@@ -237,14 +241,52 @@ func llmClauseToClause(lc llmClause) (Clause, bool) {
 	}
 	op := Op(lc.Op)
 
-	// Resolve date strings for modified_at into Unix int64 values.
 	var value any = lc.Value
-	if field == FieldModifiedAt {
+
+	switch field {
+	case FieldModifiedAt:
+		// Resolve date strings to Unix int64.
 		unix, resolved := resolveDateToUnix(lc.Value, op)
 		if !resolved {
 			return Clause{}, false
 		}
 		value = unix
+
+	case FieldSizeBytes:
+		// LLM may return a plain integer string ("10485760") or size notation ("10mb").
+		// Try plain int64 first, then ParseSize.
+		if n, err := strconv.ParseInt(strings.TrimSpace(lc.Value), 10, 64); err == nil {
+			value = n
+		} else {
+			// Strip any operator prefix that ParseSize expects (e.g. "10mb" → op already known).
+			_, bytes, ok := ParseSize(lc.Value)
+			if !ok {
+				return Clause{}, false
+			}
+			value = bytes
+		}
+
+	case FieldExtension:
+		if op == OpInSet {
+			// Comma-separated list: "jpg,png" or ".jpg,.png"
+			parts := strings.Split(lc.Value, ",")
+			exts := make([]string, 0, len(parts))
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p == "" {
+					continue
+				}
+				if !strings.HasPrefix(p, ".") {
+					p = "." + p
+				}
+				exts = append(exts, p)
+			}
+			if len(exts) == 0 {
+				return Clause{}, false
+			}
+			value = exts
+		}
+		// Other ops (eq, contains) keep value as string.
 	}
 
 	return Clause{

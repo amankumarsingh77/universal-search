@@ -25,8 +25,6 @@ export function searchReducer(state: SearchState, action: SearchAction): SearchS
     case 'KEYSTROKE':
       return { ...state, raw: action.payload, phase: 'typing' }
     case 'PARSE_COMPLETE':
-      // Only update chips when NOT in typing phase
-      if (state.phase === 'typing') return state
       return {
         ...state,
         chips: action.payload.chips,

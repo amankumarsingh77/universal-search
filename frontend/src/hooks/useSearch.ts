@@ -87,11 +87,11 @@ export function useSearch() {
     try {
       const withFilters = await SearchWithFilters(q, semanticQuery, denyList);
       const res = withFilters?.results || [];
-      // Always update the banner — clear it when absent so stale banners don't persist.
-      dispatch({ type: 'BANNER_SET', payload: withFilters?.relaxationBanner ?? '' });
 
       if (seq !== searchSeqRef.current) return;
 
+      // Always update the banner — clear it when absent so stale banners don't persist.
+      dispatch({ type: 'BANNER_SET', payload: withFilters?.relaxationBanner ?? '' });
       lastSemanticQueryRef.current = semanticQuery;
       unfilteredResultsRef.current = res;
       setResults(res);
@@ -129,10 +129,8 @@ export function useSearch() {
       clearTimeout(parseTimerRef.current);
       parseTimerRef.current = null;
     }
-    // Allow PARSE_COMPLETE by briefly resetting phase
-    dispatch({ type: 'PARSE_COMPLETE', payload: { chips: nlState.chips, semanticQuery: nlState.semanticQuery } });
     runParseQuery(nlState.raw);
-  }, [nlState.raw, nlState.chips, nlState.semanticQuery, runParseQuery]);
+  }, [nlState.raw, runParseQuery]);
 
   // Effect for debounced search + parse query timer (triggered by raw query changes)
   useEffect(() => {

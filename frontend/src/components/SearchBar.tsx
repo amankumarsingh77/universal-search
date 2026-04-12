@@ -64,6 +64,7 @@ export function SearchBar({
             onClick={() => onQueryChange('')}
             style={styles.clearButton}
             title="Clear search"
+            aria-label="Clear search"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="var(--text-secondary)" strokeWidth="1.5" strokeLinecap="round" />

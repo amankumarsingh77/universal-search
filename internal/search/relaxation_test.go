@@ -183,8 +183,9 @@ func TestRelaxation_FallsBackToEmptySpec(t *testing.T) {
 	spec := query.FilterSpec{
 		SemanticQuery: "something important",
 		Must: []query.Clause{
-			// modified_at >= year 2099 — will never match any real file
-			{Field: query.FieldModifiedAt, Op: query.OpGte, Value: "2099-01-01T00:00:00Z"},
+			// modified_at >= year 2099 — will never match any real file.
+			// Use Unix int64 (the shape the store/filter layer expects).
+			{Field: query.FieldModifiedAt, Op: query.OpGte, Value: int64(4070908800)}, // 2099-01-01 00:00:00 UTC
 		},
 	}
 

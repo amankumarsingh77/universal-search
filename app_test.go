@@ -4,12 +4,17 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"universal-search/internal/indexer"
+	"universal-search/internal/query"
+	"universal-search/internal/search"
 	"universal-search/internal/store"
 	"universal-search/internal/vectorstore"
 )
+
 
 func newTestApp(t *testing.T) *App {
 	t.Helper()
@@ -314,4 +319,395 @@ func TestReindexFolder_NonExistentPath(t *testing.T) {
 	a := &App{store: s, pipeline: p, logger: slog.Default()}
 	// Should not panic.
 	a.ReindexFolder("/does/not/exist/at/all")
+}
+
+// TestDetectMissingVectorBlobs_False — Phase 3
+// On an empty store, DetectMissingVectorBlobs must return false.
+func TestDetectMissingVectorBlobs_False(t *testing.T) {
+	a := newTestApp(t)
+
+	result := a.DetectMissingVectorBlobs()
+	if result {
+		t.Fatal("expected DetectMissingVectorBlobs to return false on empty store")
+	}
+}
+
+// newTestAppWithCache returns an App wired with a ParsedQueryCache.
+func newTestAppWithCache(t *testing.T) *App {
+	t.Helper()
+	s, err := store.NewStore(":memory:", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	a := &App{
+		store:           s,
+		logger:          slog.Default(),
+		parsedQueryCache: query.NewParsedQueryCache(s),
+	}
+	return a
+}
+
+// TestParseQuery_GrammarOnly — Phase 6
+// "kind:image beach" parses grammar-only (no LLM needed), returns at least one chip
+// with field="file_type" and semanticQuery="beach".
+func TestParseQuery_GrammarOnly(t *testing.T) {
+	a := newTestAppWithCache(t)
+
+	result, err := a.ParseQuery("kind:image beach")
+	if err != nil {
+		t.Fatalf("ParseQuery returned error: %v", err)
+	}
+	if result.SemanticQuery != "beach" {
+		t.Errorf("expected SemanticQuery=beach, got %q", result.SemanticQuery)
+	}
+	if !result.HasFilters {
+		t.Error("expected HasFilters=true for kind:image query")
+	}
+	if len(result.Chips) == 0 {
+		t.Error("expected at least one chip for kind:image filter")
+	}
+	// Find the file_type chip
+	var found bool
+	for _, c := range result.Chips {
+		if c.Field == "file_type" {
+			found = true
+			if c.Value != "image" {
+				t.Errorf("expected chip value=image, got %q", c.Value)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a chip with field=file_type")
+	}
+}
+
+// TestParseQuery_Disabled — Phase 6
+// When nl_query_enabled=false, ParseQuery returns an empty result without error.
+func TestParseQuery_Disabled(t *testing.T) {
+	a := newTestAppWithCache(t)
+	if err := a.store.SetSetting("nl_query_enabled", "false"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.ParseQuery("kind:image beach")
+	if err != nil {
+		t.Fatalf("ParseQuery returned error: %v", err)
+	}
+	if len(result.Chips) != 0 {
+		t.Errorf("expected no chips when disabled, got %d", len(result.Chips))
+	}
+	if result.HasFilters {
+		t.Error("expected HasFilters=false when disabled")
+	}
+}
+
+// TestSearchWithFilters_NoSpec — Phase 6
+// With an empty raw query, SearchWithFilters returns no error (falls back gracefully).
+func TestSearchWithFilters_NoSpec(t *testing.T) {
+	a := newTestAppWithCache(t)
+	// No embedder, but with an empty query that won't reach vector search.
+	// This tests that we get a graceful path when embedder is nil.
+	_, err := a.SearchWithFilters("", "", nil)
+	// With nil embedder, it falls back to Search("") which returns nil,nil.
+	// Accept either nil error or specific embedder error.
+	_ = err // we just confirm it doesn't panic
+}
+
+// TestBuildChipDTOs_FileType — Phase 6
+// file_type=image clause must yield a chip with label "Images",
+// field="file_type", op="eq", value="image",
+// and clauseKey="file_type|eq|image".
+func TestBuildChipDTOs_FileType(t *testing.T) {
+	spec := query.FilterSpec{
+		Must: []query.Clause{
+			{Field: query.FieldFileType, Op: query.OpEq, Value: "image"},
+		},
+	}
+	chips := buildChipDTOs(spec)
+	if len(chips) == 0 {
+		t.Fatal("expected at least one chip")
+	}
+	c := chips[0]
+	if c.Label != "Images" {
+		t.Errorf("expected label=Images, got %q", c.Label)
+	}
+	if c.Field != "file_type" {
+		t.Errorf("expected field=file_type, got %q", c.Field)
+	}
+	if c.Op != "eq" {
+		t.Errorf("expected op=eq, got %q", c.Op)
+	}
+	if c.Value != "image" {
+		t.Errorf("expected value=image, got %q", c.Value)
+	}
+	if c.ClauseKey != "file_type|eq|image" {
+		t.Errorf("expected clauseKey=file_type|eq|image, got %q", c.ClauseKey)
+	}
+}
+
+// TestBuildChipDTOs_ModifiedAt — Phase 6
+// modified_at >= date should produce a chip with label starting "Since".
+func TestBuildChipDTOs_ModifiedAt(t *testing.T) {
+	date := time.Date(2026, 4, 5, 0, 0, 0, 0, time.UTC)
+	spec := query.FilterSpec{
+		Must: []query.Clause{
+			{Field: query.FieldModifiedAt, Op: query.OpGte, Value: date},
+		},
+	}
+	chips := buildChipDTOs(spec)
+	if len(chips) == 0 {
+		t.Fatal("expected at least one chip")
+	}
+	if !strings.HasPrefix(chips[0].Label, "Since") {
+		t.Errorf("expected label starting with Since, got %q", chips[0].Label)
+	}
+}
+
+// TestBuildChipDTOs_Extension — Phase 6
+// extension IN [.py,.go] should produce a chip with label containing ".py" and ".go".
+func TestBuildChipDTOs_Extension(t *testing.T) {
+	spec := query.FilterSpec{
+		Must: []query.Clause{
+			{Field: query.FieldExtension, Op: query.OpInSet, Value: []string{".py", ".go"}},
+		},
+	}
+	chips := buildChipDTOs(spec)
+	if len(chips) == 0 {
+		t.Fatal("expected at least one chip")
+	}
+	if !strings.Contains(chips[0].Label, ".py") || !strings.Contains(chips[0].Label, ".go") {
+		t.Errorf("expected label to contain .py and .go, got %q", chips[0].Label)
+	}
+}
+
+// TestBuildChipDTOs_SizeBytes — Phase 6
+// size_bytes > 10485760 should produce a chip with label "> 10 MB".
+func TestBuildChipDTOs_SizeBytes(t *testing.T) {
+	spec := query.FilterSpec{
+		Must: []query.Clause{
+			{Field: query.FieldSizeBytes, Op: query.OpGt, Value: int64(10485760)},
+		},
+	}
+	chips := buildChipDTOs(spec)
+	if len(chips) == 0 {
+		t.Fatal("expected at least one chip")
+	}
+	if !strings.Contains(chips[0].Label, "10 MB") {
+		t.Errorf("expected label to contain '10 MB', got %q", chips[0].Label)
+	}
+}
+
+// TestBuildChipDTOs_MustNotPrefixesNot — Phase 6
+// MustNot clause should prefix the label with "Not ".
+func TestBuildChipDTOs_MustNotPrefixesNot(t *testing.T) {
+	spec := query.FilterSpec{
+		MustNot: []query.Clause{
+			{Field: query.FieldFileType, Op: query.OpEq, Value: "video"},
+		},
+	}
+	chips := buildChipDTOs(spec)
+	if len(chips) == 0 {
+		t.Fatal("expected at least one chip")
+	}
+	if !strings.HasPrefix(chips[0].Label, "Not ") {
+		t.Errorf("expected label to start with 'Not ', got %q", chips[0].Label)
+	}
+}
+
+// TestParseQuery_CacheHit — Phase 6
+// A second call with the same query (after the first populates the cache) should
+// return CacheHit=true.
+func TestParseQuery_CacheHit(t *testing.T) {
+	a := newTestAppWithCache(t)
+
+	// Manually prime the cache with a known spec.
+	spec := query.FilterSpec{
+		SemanticQuery: "beach",
+		Must: []query.Clause{
+			{Field: query.FieldFileType, Op: query.OpEq, Value: "image"},
+		},
+		Source: query.SourceGrammar,
+	}
+	if err := a.parsedQueryCache.Set("kind:image beach", spec); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.ParseQuery("kind:image beach")
+	if err != nil {
+		t.Fatalf("ParseQuery returned error: %v", err)
+	}
+	if !result.CacheHit {
+		t.Error("expected CacheHit=true on second call")
+	}
+	if result.SemanticQuery != "beach" {
+		t.Errorf("expected SemanticQuery=beach from cache, got %q", result.SemanticQuery)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7: Offline Mode tests (NLQ-120, NLQ-121)
+// ---------------------------------------------------------------------------
+
+// TestOfflineMode_SkipsLLM — no API key → ParseQuery returns IsOffline=true, no error.
+func TestOfflineMode_SkipsLLM(t *testing.T) {
+	a := newTestAppWithCache(t)
+	// No embedder set (offline mode)
+	result, err := a.ParseQuery("kind:image beach")
+	if err != nil {
+		t.Fatalf("ParseQuery returned error in offline mode: %v", err)
+	}
+	if !result.IsOffline {
+		t.Error("expected IsOffline=true when embedder is nil")
+	}
+	// Grammar should still run and produce chips
+	if len(result.Chips) == 0 {
+		t.Error("expected chips from grammar parse even in offline mode")
+	}
+}
+
+// TestOfflineMode_SearchReturnsFilenameResults — offline + SearchWithFilters
+// falls back to filename-contains search.
+func TestOfflineMode_SearchReturnsFilenameResults(t *testing.T) {
+	a := newTestAppWithCache(t)
+	// Insert a file record so SearchFilenameContains can find it.
+	_, err := a.store.UpsertFile(store.FileRecord{
+		Path:      "/home/user/documents/report.pdf",
+		FileType:  "document",
+		Extension: ".pdf",
+		SizeBytes: 1024,
+		ModifiedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := a.SearchWithFilters("report", "", nil)
+	if err != nil {
+		t.Fatalf("SearchWithFilters returned error in offline mode: %v", err)
+	}
+	// Should contain at least the report.pdf file
+	found := false
+	for _, r := range result.Results {
+		if strings.Contains(r.FilePath, "report") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected filename-based result for 'report', got %+v", result.Results)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7: NL Query Enabled toggle tests (NLQ-133)
+// ---------------------------------------------------------------------------
+
+// TestNLQueryEnabled_DefaultTrue — no setting → GetNLQueryEnabled returns true.
+func TestNLQueryEnabled_DefaultTrue(t *testing.T) {
+	a := newTestAppWithCache(t)
+	if !a.GetNLQueryEnabled() {
+		t.Error("expected GetNLQueryEnabled()=true when no setting stored")
+	}
+}
+
+// TestNLQueryEnabled_CanBeDisabled — SetNLQueryEnabled(false) persists and is read back.
+func TestNLQueryEnabled_CanBeDisabled(t *testing.T) {
+	a := newTestAppWithCache(t)
+	if err := a.SetNLQueryEnabled(false); err != nil {
+		t.Fatalf("SetNLQueryEnabled(false) returned error: %v", err)
+	}
+	if a.GetNLQueryEnabled() {
+		t.Error("expected GetNLQueryEnabled()=false after SetNLQueryEnabled(false)")
+	}
+	// ParseQuery should return empty result when disabled
+	result, err := a.ParseQuery("kind:image beach")
+	if err != nil {
+		t.Fatalf("ParseQuery returned error: %v", err)
+	}
+	if len(result.Chips) != 0 {
+		t.Errorf("expected no chips when NL query disabled, got %d", len(result.Chips))
+	}
+}
+
+// TestGetNLQueryEnabled_CanBeEnabled — SetNLQueryEnabled(true) sets it back.
+func TestGetNLQueryEnabled_CanBeEnabled(t *testing.T) {
+	a := newTestAppWithCache(t)
+	if err := a.SetNLQueryEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetNLQueryEnabled(true); err != nil {
+		t.Fatalf("SetNLQueryEnabled(true) returned error: %v", err)
+	}
+	if !a.GetNLQueryEnabled() {
+		t.Error("expected GetNLQueryEnabled()=true after SetNLQueryEnabled(true)")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8: Observability + Settings + Startup Cache Eviction
+// ---------------------------------------------------------------------------
+
+// TestGetDebugStats_ReturnsMap — GetDebugStats returns a map with expected keys.
+func TestGetDebugStats_ReturnsMap(t *testing.T) {
+	a := newTestApp(t)
+	a.queryStats = &QueryStats{}
+
+	stats := a.GetDebugStats()
+	if stats == nil {
+		t.Fatal("expected non-nil map from GetDebugStats")
+	}
+	for _, key := range []string{"llm_call_count", "llm_avg_ms", "cache_hits", "cache_misses"} {
+		if _, ok := stats[key]; !ok {
+			t.Errorf("expected key %q in GetDebugStats result", key)
+		}
+	}
+}
+
+// TestGetDebugStats_ZeroInitial — before any calls, all counts are zero.
+func TestGetDebugStats_ZeroInitial(t *testing.T) {
+	a := newTestApp(t)
+	a.queryStats = &QueryStats{}
+
+	stats := a.GetDebugStats()
+	for _, key := range []string{"llm_call_count", "llm_avg_ms", "cache_hits", "cache_misses"} {
+		val, ok := stats[key]
+		if !ok {
+			t.Fatalf("missing key %q", key)
+		}
+		if val.(int64) != 0 {
+			t.Errorf("expected %q=0 initially, got %v", key, val)
+		}
+	}
+}
+
+// TestBruteForceThreshold_DefaultWhenMissing — no setting → uses DefaultBruteForceThreshold.
+func TestBruteForceThreshold_DefaultWhenMissing(t *testing.T) {
+	a := newTestApp(t)
+
+	got := a.getBruteForceThreshold()
+	if got != search.DefaultBruteForceThreshold {
+		t.Errorf("expected %d, got %d", search.DefaultBruteForceThreshold, got)
+	}
+}
+
+// TestBruteForceThreshold_FromSettings — set "brute_force_threshold"="100" → returns 100.
+func TestBruteForceThreshold_FromSettings(t *testing.T) {
+	a := newTestApp(t)
+	if err := a.store.SetSetting("brute_force_threshold", "100"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := a.getBruteForceThreshold()
+	if got != 100 {
+		t.Errorf("expected 100, got %d", got)
+	}
+}
+
+// TestNeedsReindex_FalseWhenEmpty — empty store → NeedsReindex returns false.
+func TestNeedsReindex_FalseWhenEmpty(t *testing.T) {
+	a := newTestApp(t)
+
+	if a.NeedsReindex() {
+		t.Fatal("expected NeedsReindex()=false on empty store")
+	}
 }

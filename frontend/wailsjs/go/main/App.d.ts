@@ -6,7 +6,11 @@ export function AddFolder(arg1:string):Promise<void>;
 
 export function AddIgnoredFolder(arg1:string):Promise<void>;
 
+export function DetectMissingVectorBlobs():Promise<boolean>;
+
 export function EmitEvent(arg1:string):Promise<void>;
+
+export function GetDebugStats():Promise<Record<string, any>>;
 
 export function GetFilePreview(arg1:string):Promise<string>;
 
@@ -20,6 +24,8 @@ export function GetIgnoredFolders():Promise<Array<string>>;
 
 export function GetIndexStatus():Promise<main.IndexStatusDTO>;
 
+export function GetNLQueryEnabled():Promise<boolean>;
+
 export function GetOnboarded():Promise<boolean>;
 
 export function GetPreviewClipPath(arg1:string,arg2:number):Promise<string>;
@@ -30,9 +36,13 @@ export function HideWindow():Promise<void>;
 
 export function MarkOnboarded():Promise<void>;
 
+export function NeedsReindex():Promise<boolean>;
+
 export function OpenFile(arg1:string):Promise<void>;
 
 export function OpenFolder(arg1:string):Promise<void>;
+
+export function ParseQuery(arg1:string):Promise<main.ParseQueryResult>;
 
 export function PauseIndexing():Promise<void>;
 
@@ -52,7 +62,11 @@ export function ResumeIndexing():Promise<void>;
 
 export function Search(arg1:string):Promise<Array<main.SearchResultDTO>>;
 
+export function SearchWithFilters(arg1:string,arg2:string,arg3:Array<string>):Promise<main.SearchWithFiltersResult>;
+
 export function SetGeminiAPIKey(arg1:string):Promise<void>;
+
+export function SetNLQueryEnabled(arg1:boolean):Promise<void>;
 
 export function SetSetting(arg1:string,arg2:string):Promise<void>;
 

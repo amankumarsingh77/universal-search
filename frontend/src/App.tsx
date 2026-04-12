@@ -20,6 +20,11 @@ function App() {
     selectedIndex,
     setSelectedIndex,
     isSearching,
+    chips,
+    banner,
+    removeChip,
+    forceParseQuery,
+    isOffline,
   } = useSearch();
 
   const indexingStatus = useIndexingStatus();
@@ -141,7 +146,16 @@ function App() {
         query={query}
         onQueryChange={setQuery}
         isSearching={isSearching}
+        chips={chips}
+        onChipRemove={removeChip}
+        banner={banner}
+        onForceParseQuery={forceParseQuery}
       />
+      {isOffline && (
+        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: '2px 0' }}>
+          Offline mode — filename search only
+        </div>
+      )}
       <div style={styles.body}>
         <ResultsList
           results={results}

@@ -805,10 +805,11 @@ func (s *Store) EvictOldParsedQueryCache() error {
 
 // SearchFilenameContains returns up to 50 files whose path contains query as a substring.
 func (s *Store) SearchFilenameContains(query string) ([]FileRecord, error) {
-	rows, err := s.db.Query(`
-		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
-		FROM files WHERE path LIKE '%' || ? || '%' LIMIT 50
-	`, query)
+	escaped := escapeLike(query)
+	rows, err := s.db.Query(
+		`SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path`+
+			` FROM files WHERE path LIKE '%' || ? || '%' ESCAPE '\' LIMIT 50`,
+		escaped)
 	if err != nil {
 		return nil, fmt.Errorf("search filename contains: %w", err)
 	}

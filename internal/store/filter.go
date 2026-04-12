@@ -125,8 +125,8 @@ func clauseToSQL(c Clause, negate bool) (string, []any, error) {
 		expr = fmt.Sprintf("%s <= %s", col, rhs)
 		args = rArgs
 	case OpContains:
-		expr = fmt.Sprintf("%s LIKE '%%' || ? || '%%'", col)
-		args = []any{c.Value}
+		expr = fmt.Sprintf("%s LIKE '%%' || ? || '%%' ESCAPE '\\'", col)
+		args = []any{escapeLike(fmt.Sprint(c.Value))}
 	case OpInSet:
 		vals, ok := c.Value.([]any)
 		if !ok {
@@ -157,4 +157,13 @@ func clauseToSQL(c Clause, negate bool) (string, []any, error) {
 		expr = "NOT (" + expr + ")"
 	}
 	return expr, args, nil
+}
+
+// escapeLike escapes LIKE special characters (%, _) with a backslash so that
+// user-supplied substrings are treated as literals, not wildcards.
+func escapeLike(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }

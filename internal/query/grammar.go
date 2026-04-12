@@ -59,14 +59,38 @@ func Parse(input string) (spec FilterSpec) {
 			continue
 		}
 
-		// Negation: -term
+		// Negation: -term or -op:value
 		if runes[pos] == '-' && pos+1 < n && !unicode.IsSpace(runes[pos+1]) {
 			pos++ // consume '-'
-			term := readToken(runes, &pos)
+			start := pos
+			tok := readToken(runes, &pos)
+			if tok == "" {
+				continue
+			}
+			// Check if this is -op:value (e.g. -kind:image → MustNot file_type)
+			colonIdx := strings.IndexByte(tok, ':')
+			if colonIdx > 0 {
+				keyword := strings.ToLower(tok[:colonIdx])
+				if recognizedOps[keyword] {
+					value := tok[colonIdx+1:]
+					if value == "" {
+						for pos < n && unicode.IsSpace(runes[pos]) {
+							pos++
+						}
+						value = readOpValue(runes, &pos, now)
+					}
+					if clauses, _, handled := parseOperator(keyword, value, now); handled {
+						spec.MustNot = append(spec.MustNot, clauses...)
+						continue
+					}
+				}
+			}
+			// Plain -term → MustNot path contains
+			_ = start
 			spec.MustNot = append(spec.MustNot, Clause{
 				Field: FieldPath,
 				Op:    OpContains,
-				Value: term,
+				Value: tok,
 			})
 			continue
 		}
@@ -84,13 +108,13 @@ func Parse(input string) (spec FilterSpec) {
 			keyword := strings.ToLower(tok[:colonIdx])
 			if recognizedOps[keyword] {
 				value := tok[colonIdx+1:]
-				// If value is empty, peek for next non-space token
+				// If value is empty or operator value needs multi-word support,
+				// collect the full value (may be quoted or multi-word for date ops).
 				if value == "" {
-					// Skip whitespace and read next token
 					for pos < n && unicode.IsSpace(runes[pos]) {
 						pos++
 					}
-					value = readToken(runes, &pos)
+					value = readOpValue(runes, &pos, now)
 				}
 				if clause, extra, handled := parseOperator(keyword, value, now); handled {
 					spec.Must = append(spec.Must, clause...)
@@ -120,6 +144,67 @@ func readToken(runes []rune, pos *int) string {
 		(*pos)++
 	}
 	return string(runes[start:*pos])
+}
+
+// twoWordDatePrefixes are the first words of recognized two-word relative date phrases.
+var twoWordDatePrefixes = map[string]bool{
+	"last": true,
+	"past": true,
+	"this": true,
+	"next": true,
+}
+
+// readOpValue reads an operator value, supporting:
+//   - Quoted strings: "last week"
+//   - Two-word relative date phrases: last week, last month, past 3 days
+//   - Single words otherwise
+func readOpValue(runes []rune, pos *int, now time.Time) string {
+	n := len(runes)
+	if *pos >= n {
+		return ""
+	}
+
+	// Quoted value
+	if runes[*pos] == '"' {
+		(*pos)++ // consume opening quote
+		start := *pos
+		for *pos < n && runes[*pos] != '"' {
+			(*pos)++
+		}
+		val := string(runes[start:*pos])
+		if *pos < n {
+			(*pos)++ // consume closing quote
+		}
+		return val
+	}
+
+	// Read first word
+	first := readToken(runes, pos)
+	if first == "" {
+		return ""
+	}
+
+	// Peek for a second word if the first is a known two-word date prefix
+	lower := strings.ToLower(first)
+	if twoWordDatePrefixes[lower] {
+		// Save position, try to read second word
+		savedPos := *pos
+		for *pos < n && unicode.IsSpace(runes[*pos]) {
+			(*pos)++
+		}
+		second := readToken(runes, pos)
+		if second != "" {
+			candidate := first + " " + second
+			// Validate that the two-word phrase parses as a date
+			if _, _, ok := NormalizeDate(candidate, now); ok {
+				return candidate
+			}
+		}
+		// Not a valid two-word date — restore position, return just first word
+		*pos = savedPos
+	}
+
+	return first
 }
 
 // parseOperator processes a recognized keyword + value pair.

@@ -48,9 +48,13 @@ func NewPlannerWithLogger(s PlannerStore, idx *vectorstore.Index, threshold int,
 // Returns (results, chosenStrategy, plannerCount, error).
 // chosenStrategy: "semantic" | "brute_force" | "hnsw_post_filter"
 func (p *Planner) Plan(queryVec []float32, spec query.FilterSpec, k int) ([]store.SearchResult, string, int, error) {
-	// No structural filters → pure semantic HNSW search.
-	if len(spec.Must) == 0 && len(spec.MustNot) == 0 {
-		p.logger.Debug("planner: no filters, using pure semantic HNSW search", "k", k)
+	// Convert to store spec early so we can inspect what SQL filters are actually present.
+	// convertToStoreSpec strips semantic_contains clauses (not SQL-computable).
+	storeSpec := convertToStoreSpec(spec)
+
+	// No SQL-computable filters → pure semantic HNSW search.
+	if len(storeSpec.Must) == 0 && len(storeSpec.MustNot) == 0 {
+		p.logger.Debug("planner: no SQL filters, using pure semantic HNSW search", "k", k)
 		results, err := p.index.Search(queryVec, k*5)
 		if err != nil {
 			return nil, "semantic", 0, err
@@ -63,8 +67,6 @@ func (p *Planner) Plan(queryVec []float32, spec query.FilterSpec, k int) ([]stor
 		p.logger.Debug("planner: semantic search complete", "candidates", len(storeResults))
 		return storeResults, "semantic", 0, nil
 	}
-
-	storeSpec := convertToStoreSpec(spec)
 
 	p.logger.Debug("planner: counting filtered files",
 		"must_clauses", len(spec.Must),

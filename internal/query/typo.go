@@ -38,9 +38,9 @@ func Levenshtein(a, b string) int {
 			if v := dp[i][j-1] + 1; v < dp[i][j] {
 				dp[i][j] = v // insert into a
 			}
-			// Transposition
+			// Transposition (always costs 1 — cost var can be 0 for equal chars)
 			if i > 1 && j > 1 && ra[i-1] == rb[j-2] && ra[i-2] == rb[j-1] {
-				if v := dp[i-2][j-2] + cost; v < dp[i][j] {
+				if v := dp[i-2][j-2] + 1; v < dp[i][j] {
 					dp[i][j] = v
 				}
 			}

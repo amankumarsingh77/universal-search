@@ -82,13 +82,10 @@ func NormalizeDate(s string, now time.Time) (after, before time.Time, ok bool) {
 	// -- Try olebedev/when (NLP relative dates) --
 	if result, err := whenParser.Parse(s, now); err == nil && result != nil {
 		t := result.Time
-		// If the result falls in the future but input is past-tense phrasing, clamp
-		if t.After(now) {
-			t = now
-		}
 		// Normalize to start-of-day for consistency with other branches.
 		start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, now.Location())
-		return start, now, true
+		end := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, now.Location())
+		return start, end, true
 	}
 
 	// -- Try araddon/dateparse for any remaining formats --

@@ -760,6 +760,8 @@ func (a *App) SetGeminiAPIKey(key string) error {
 	}
 	a.embedder = tmpEmb
 	a.pipeline.SetEmbedder(tmpEmb)
+	// Rebuild LLM parser so it uses the new client from the hot-swapped embedder.
+	a.llmParser = query.NewLLMParser(tmpEmb.Client(), tmpEmb.Limiter())
 
 	restore()
 
@@ -1071,7 +1073,16 @@ func (a *App) SearchWithFilters(raw string, semanticQuery string, denyList []str
 	a.logger.Debug("search_with_filters: start", "raw", raw, "offline", isOffline, "deny_list_len", len(denyList))
 	if isOffline {
 		a.logger.Debug("search_with_filters: offline mode, using filename search only")
-		return a.searchFilenameOnly(raw)
+		// Use the most informative semantic query available; fall back to raw.
+		grammarSpecOffline := query.Parse(raw)
+		offlineQuery := semanticQuery
+		if offlineQuery == "" {
+			offlineQuery = grammarSpecOffline.SemanticQuery
+		}
+		if offlineQuery == "" {
+			offlineQuery = raw
+		}
+		return a.searchFilenameOnly(offlineQuery)
 	}
 
 	// Get current FilterSpec (from cache or grammar).

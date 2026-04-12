@@ -87,9 +87,8 @@ export function useSearch() {
     try {
       const withFilters = await SearchWithFilters(q, semanticQuery, denyList);
       const res = withFilters?.results || [];
-      if (withFilters?.relaxationBanner) {
-        dispatch({ type: 'BANNER_SET', payload: withFilters.relaxationBanner });
-      }
+      // Always update the banner — clear it when absent so stale banners don't persist.
+      dispatch({ type: 'BANNER_SET', payload: withFilters?.relaxationBanner ?? '' });
 
       if (seq !== searchSeqRef.current) return;
 

@@ -1,0 +1,11 @@
+{
+  "name": "universal-search-extension",
+  "version": "1.0.0",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "latest",
+    "@sinclair/typebox": "latest"
+  }
+}

@@ -173,7 +173,28 @@ async function spawnDebugAgent(
   });
 }
 
+const READ_ONLY_TOOLS = ["read", "bash", "grep", "find", "ls"];
+const FULL_TOOLS = ["read", "bash", "edit", "write"];
+
 export function registerWorkflow(pi: ExtensionAPI): void {
+  let researchMode = false;
+
+  pi.registerCommand("research", {
+    description: "Toggle read-only research mode (locks out edit/write tools)",
+    handler: async (_args, ctx) => {
+      researchMode = !researchMode;
+      if (researchMode) {
+        pi.setActiveTools(READ_ONLY_TOOLS);
+        ctx.ui.setStatus("research", ctx.ui.theme.fg("warning", "research"));
+        ctx.ui.notify("Research mode ON — edit/write locked. Run /research again to unlock.", "info");
+      } else {
+        pi.setActiveTools(FULL_TOOLS);
+        ctx.ui.setStatus("research", undefined);
+        ctx.ui.notify("Research mode OFF — full tool access restored.", "info");
+      }
+    },
+  });
+
   pi.registerCommand("implement", {
     description: "Orchestrate headless sub-agents to implement the latest spec",
     handler: async (_args, ctx) => {

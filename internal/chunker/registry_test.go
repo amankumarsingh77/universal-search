@@ -13,6 +13,7 @@ func TestClassify_KnownExtensions(t *testing.T) {
 	}{
 		{"photo.jpg", TypeImage},
 		{"photo.heic", TypeImage},
+		{"animated.gif", TypeImage},
 		{"clip.mp4", TypeVideo},
 		{"clip.webm", TypeVideo},
 		{"song.mp3", TypeAudio},
@@ -62,6 +63,7 @@ func TestMimeType(t *testing.T) {
 		expected string
 	}{
 		{"photo.jpg", "image/jpeg"},
+		{"animated.gif", "image/gif"},
 		{"video.mp4", "video/mp4"},
 		{"song.mp3", "audio/mpeg"},
 		{"doc.pdf", "application/pdf"},

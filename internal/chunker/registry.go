@@ -23,6 +23,7 @@ var imageExtensions = map[string]string{
 	".webp": "image/webp",
 	".heic": "image/heic",
 	".heif": "image/heif",
+	".gif":  "image/gif",
 }
 
 var videoExtensions = map[string]string{

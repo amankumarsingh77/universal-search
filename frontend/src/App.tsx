@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { SearchBar } from './components/SearchBar';
 import { ResultsList } from './components/ResultsList';
+import { EmptyState } from './components/EmptyState';
 import { PreviewPanel } from './components/PreviewPanel';
 import { IndexingBar } from './components/IndexingBar';
 import { FolderManager } from './components/FolderManager';
@@ -170,17 +171,27 @@ function App() {
         onForceParseQuery={forceParseQuery}
       />
       <div style={styles.body}>
-        <ResultsList
-          results={results}
-          selectedIndex={selectedIndex}
-          onSelect={setSelectedIndex}
-          onOpen={(path) => { OpenFile(path); HideWindow(); }}
-          hasFolders={hasFolders}
-          hasApiKey={hasApiKey}
-          query={query}
-          onAddFolder={() => setShowFolderManager(true)}
-          onSetApiKey={() => setShowApiKeyDialog(true)}
-        />
+        {(() => {
+          const trimmedQuery = query.trim();
+          const hasQuery = trimmedQuery.length > 0;
+          const showOnboarding = !hasFolders || !hasApiKey;
+          const showEmptyHint = results.length === 0 && !hasQuery && !showOnboarding;
+          const showNoResults = results.length === 0 && hasQuery && !isSearching && !showOnboarding;
+          if (showEmptyHint) return <EmptyState variant="no-query" />;
+          if (showNoResults) return <EmptyState variant="no-results" query={trimmedQuery} />;
+          return (
+            <ResultsList
+              results={results}
+              selectedIndex={selectedIndex}
+              onSelect={setSelectedIndex}
+              onOpen={(path) => { OpenFile(path); HideWindow(); }}
+              hasFolders={hasFolders}
+              hasApiKey={hasApiKey}
+              onAddFolder={() => setShowFolderManager(true)}
+              onSetApiKey={() => setShowApiKeyDialog(true)}
+            />
+          );
+        })()}
         {previewOpen && (
           <PreviewPanel result={selectedResult} onOpenFolder={(path) => { OpenFolder(path); HideWindow(); }} />
         )}

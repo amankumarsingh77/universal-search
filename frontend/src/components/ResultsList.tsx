@@ -9,12 +9,11 @@ interface ResultsListProps {
   onOpen: (filePath: string) => void;
   hasFolders: boolean;
   hasApiKey: boolean;
-  query: string;
   onAddFolder: () => void;
   onSetApiKey: () => void;
 }
 
-export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolders, hasApiKey, query, onAddFolder, onSetApiKey }: ResultsListProps) {
+export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolders, hasApiKey, onAddFolder, onSetApiKey }: ResultsListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const itemHeight = 52;
 
@@ -34,19 +33,8 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
     }
   }, [selectedIndex]);
 
-  // No results + query non-empty
-  if (query && results.length === 0) {
-    return (
-      <div style={styles.container}>
-        <div style={styles.empty}>
-          <span style={styles.emptyText}>No results for '{query}'</span>
-        </div>
-      </div>
-    );
-  }
-
-  // No query + no folders (first-launch onboarding)
-  if (!query && !hasFolders) {
+  // No folders (first-launch onboarding)
+  if (!hasFolders) {
     return (
       <div style={styles.container}>
         <div style={styles.empty}>
@@ -59,8 +47,8 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
     );
   }
 
-  // No query + has folders but no API key
-  if (!query && results.length === 0 && !hasApiKey) {
+  // Has folders but no API key
+  if (!hasApiKey) {
     return (
       <div style={styles.container}>
         <div style={styles.empty}>
@@ -69,25 +57,6 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
           <button style={styles.addFolderBtn} onClick={onSetApiKey}>
             Set API key
           </button>
-        </div>
-      </div>
-    );
-  }
-
-  // No query + has folders
-  if (!query && results.length === 0) {
-    return (
-      <div style={styles.container}>
-        <div style={styles.empty}>
-          <span style={styles.emptyText}>Type to search your files</span>
-          {!hasApiKey && (
-            <span style={styles.apiKeyWarning}>
-              No API key set —{' '}
-              <button style={styles.apiKeyLink} onClick={onSetApiKey}>
-                configure now
-              </button>
-            </span>
-          )}
         </div>
       </div>
     );
@@ -151,20 +120,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     color: 'var(--text-tertiary)',
     textAlign: 'center',
-  },
-  apiKeyWarning: {
-    fontSize: '11px',
-    color: 'var(--text-tertiary)',
-    marginTop: 4,
-  },
-  apiKeyLink: {
-    background: 'none',
-    border: 'none',
-    padding: 0,
-    color: 'var(--accent-green)',
-    cursor: 'pointer',
-    fontSize: '11px',
-    textDecoration: 'underline',
-    fontFamily: 'var(--font-sans)',
   },
 };

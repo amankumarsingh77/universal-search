@@ -1,5 +1,6 @@
 import type { SearchResultDTO } from '../hooks/useSearch';
 import { formatSize } from '../utils/format';
+import { Thumbnail } from './Thumbnail';
 
 interface ResultItemProps {
   result: SearchResultDTO;
@@ -21,17 +22,6 @@ function getTypeColor(fileType: string): string {
     case 'audio': return 'var(--accent-audio)';
     case 'code': return 'var(--accent-code)';
     default: return 'var(--text-secondary)';
-  }
-}
-
-function getTypeIcon(fileType: string): string {
-  switch (fileType) {
-    case 'video': return '🎬';
-    case 'image': return '🖼';
-    case 'audio': return '🎵';
-    case 'code': return '💻';
-    case 'text': return '📄';
-    default: return '📁';
   }
 }
 
@@ -63,43 +53,6 @@ function midTruncate(name: string, max = 40): string {
   return name.slice(0, Math.ceil(keep / 2)) + '…' + name.slice(extIdx - Math.floor(keep / 2));
 }
 
-function FileIcon({ fileType }: { fileType: string }) {
-  const colors: Record<string, string> = {
-    video: '#06B6D4',
-    image: '#F97316',
-    audio: '#EC4899',
-    code: '#A78BFA',
-    text: '#FAFAFA',
-  };
-  const color = colors[fileType] ?? 'rgba(255,255,255,0.3)';
-  const letters: Record<string, string> = {
-    video: '▶',
-    image: '⬛',
-    audio: '♪',
-    code: '</>',
-    text: '≡',
-  };
-  const letter = letters[fileType] ?? '?';
-  return (
-    <div style={{
-      width: 32, height: 32,
-      borderRadius: 6,
-      background: `${color}22`,
-      border: `1px solid ${color}44`,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      fontSize: fileType === 'code' ? 9 : 14,
-      color,
-      flexShrink: 0,
-      fontFamily: 'var(--font-mono)',
-    }}>
-      {letter}
-    </div>
-  );
-}
-
-// suppress unused warning — kept for potential external use
-void getTypeIcon;
-
 export function ResultItem({ result, isSelected, onClick, onDoubleClick }: ResultItemProps) {
   const shortDir = getShortDir(result.filePath);
   const scorePercent = Math.round(result.score * 100);
@@ -119,7 +72,7 @@ export function ResultItem({ result, isSelected, onClick, onDoubleClick }: Resul
         transition: 'background 0.1s ease, transform 0.1s ease',
       }}
     >
-      <FileIcon fileType={result.fileType} />
+      <Thumbnail fileType={result.fileType} thumbnailPath={result.thumbnailPath} />
       <div style={styles.info}>
         <div style={styles.fileName}>{midTruncate(result.fileName)}</div>
         {shortDir ? (

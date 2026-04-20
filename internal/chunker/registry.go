@@ -1,6 +1,9 @@
 package chunker
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -45,6 +48,30 @@ var audioExtensions = map[string]string{
 	".aac":  "audio/aac",
 	".ogg":  "audio/ogg",
 	".flac": "audio/flac",
+}
+
+// transcodeHEIC converts a HEIC/HEIF file to JPEG bytes using ffmpeg.
+// It is a package-level var so tests can stub it without spawning a real process.
+var transcodeHEIC = transcodeHEICToJPEG
+
+// transcodeHEICToJPEG uses ffmpeg to decode a HEIC/HEIF image and return JPEG
+// bytes via stdout. ffmpeg is already a project dependency (used for video
+// thumbnails), so this introduces no new system requirements.
+func transcodeHEICToJPEG(filePath string) ([]byte, error) {
+	out, err := exec.Command("ffmpeg",
+		"-i", filePath,
+		"-f", "mjpeg",
+		"-q:v", "4",
+		"-frames:v", "1",
+		"pipe:1",
+	).Output()
+	if err != nil {
+		return nil, fmt.Errorf("transcode HEIC to JPEG: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("transcode HEIC to JPEG: ffmpeg produced no output")
+	}
+	return out, nil
 }
 
 func Classify(filePath string) FileType {
@@ -97,6 +124,22 @@ func ChunkFile(filePath string) ([]Chunk, FileType, error) {
 		chunks, err := ChunkText(filePath)
 		return chunks, ft, err
 	case TypeImage:
+		ext := strings.ToLower(filepath.Ext(filePath))
+		if ext == ".heic" || ext == ".heif" {
+			info, err := os.Stat(filePath)
+			if err != nil {
+				return nil, ft, fmt.Errorf("stat binary file: %w", err)
+			}
+			if info.Size() > maxBinarySize {
+				return nil, ft, fmt.Errorf("file too large (%d bytes, max %d): %s", info.Size(), maxBinarySize, filePath)
+			}
+
+			data, err := transcodeHEIC(filePath)
+			if err != nil {
+				return nil, ft, err
+			}
+			return []Chunk{{Content: data, MimeType: "image/jpeg", Index: 0}}, ft, nil
+		}
 		mime := MimeType(filePath)
 		chunks, err := ChunkBinary(filePath, mime)
 		return chunks, ft, err

@@ -32,5 +32,10 @@ func ShouldInvokeLLM(residual string) bool {
 	if len(tokens) > 6 {
 		return true
 	}
+	// Structured-field detector: catches short queries with bare extensions,
+	// size patterns, and root folder names that the existing checks miss.
+	if DetectStructuredFields(residual).Any() {
+		return true
+	}
 	return false
 }

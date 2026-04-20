@@ -220,6 +220,9 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 			if attempt == maxRetries {
 				return lastSpec, nil
 			}
+			if resp != nil && len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
+				contents = append(contents, resp.Candidates[0].Content)
+			}
 			contents = append(contents, &genai.Content{
 				Role:  "user",
 				Parts: []*genai.Part{{Text: "Your previous response could not be parsed: " + decodeErr.Error() + ". Try again."}},
@@ -234,6 +237,9 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 			p.logger.Debug("validator failed", "error", err, "attempt", attempt)
 			if attempt == maxRetries {
 				return spec, nil
+			}
+			if resp != nil && len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
+				contents = append(contents, resp.Candidates[0].Content)
 			}
 			contents = append(contents, &genai.Content{
 				Role:  "user",

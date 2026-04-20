@@ -323,6 +323,85 @@ func TestParseWithRetry_HappyPath_SingleCall(t *testing.T) {
 	}
 }
 
+// TestParseWithRetry_ContentsAlternateRoles asserts that contents arriving at
+// attempt #2 and #3 have strictly alternating user/model roles (the model turn
+// is echoed back before each correction turn).
+func TestParseWithRetry_ContentsAlternateRoles(t *testing.T) {
+	var receivedContents [][]*genai.Content
+	callCount := 0
+
+	// Always return a response with empty Must + empty MustNot for a query that
+	// has a structured signal ("all .py files" → Extension signal), so the
+	// validator fires on every attempt and we get 3 calls total.
+	generate := func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+		snap := make([]*genai.Content, len(contents))
+		copy(snap, contents)
+		receivedContents = append(receivedContents, snap)
+		callCount++
+
+		return &genai.GenerateContentResponse{
+			Candidates: []*genai.Candidate{
+				{
+					Content: &genai.Content{
+						Role: "model",
+						Parts: []*genai.Part{
+							{FunctionCall: &genai.FunctionCall{
+								Name: "emit_filters",
+								Args: map[string]any{
+									"reasoning":      "empty",
+									"semantic_query": "",
+									"must":           []any{},
+									"must_not":       []any{},
+									"should":         []any{},
+								},
+							}},
+						},
+					},
+				},
+			},
+		}, nil
+	}
+
+	p := buildFakeParser(generate)
+	_, _ = p.parseWithRetry(context.Background(), "all .py files", FilterSpec{})
+
+	if callCount != 3 {
+		t.Fatalf("want 3 calls, got %d", callCount)
+	}
+
+	// Call 1: just the initial user query → [user]
+	if len(receivedContents[0]) != 1 || receivedContents[0][0].Role != "user" {
+		t.Fatalf("call 1: want [user], got %v", roleSlice(receivedContents[0]))
+	}
+
+	// Call 2: model echoed before correction → [user, model, user]
+	if len(receivedContents[1]) != 3 {
+		t.Fatalf("call 2: want 3 contents, got %d (%v)", len(receivedContents[1]), roleSlice(receivedContents[1]))
+	}
+	if receivedContents[1][0].Role != "user" || receivedContents[1][1].Role != "model" || receivedContents[1][2].Role != "user" {
+		t.Fatalf("call 2: want [user,model,user], got %v", roleSlice(receivedContents[1]))
+	}
+
+	// Call 3: two model echoes, two corrections → [user, model, user, model, user]
+	if len(receivedContents[2]) != 5 {
+		t.Fatalf("call 3: want 5 contents, got %d (%v)", len(receivedContents[2]), roleSlice(receivedContents[2]))
+	}
+	expected := []string{"user", "model", "user", "model", "user"}
+	for i, want := range expected {
+		if receivedContents[2][i].Role != want {
+			t.Fatalf("call 3 contents[%d]: want %q, got %q (%v)", i, want, receivedContents[2][i].Role, roleSlice(receivedContents[2]))
+		}
+	}
+}
+
+func roleSlice(cs []*genai.Content) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.Role
+	}
+	return out
+}
+
 // --- helpers ---
 
 func containsStr(s, sub string) bool {

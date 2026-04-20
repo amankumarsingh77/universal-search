@@ -17,6 +17,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -145,10 +146,10 @@ func main() {
 
 	err := wails.Run(&options.App{
 		Title:     "Universal Search",
-		Width:     800,
-		Height:    550,
-		MinWidth:  600,
-		MinHeight: 400,
+		Width:     960,
+		Height:    600,
+		MinWidth:  680,
+		MinHeight: 80,
 		Menu:      appMenu,
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
@@ -162,7 +163,18 @@ func main() {
 		Frameless:         true,
 		AlwaysOnTop:       true,
 		HideWindowOnClose: true,
-		BackgroundColour: &options.RGBA{R: 10, G: 10, B: 10, A: 255},
+		BackgroundColour:  &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		Mac: &mac.Options{
+			TitleBar: &mac.TitleBar{
+				TitlebarAppearsTransparent: true,
+				HideTitle:                  true,
+				HideToolbarSeparator:       true,
+				FullSizeContent:            true,
+				UseToolbar:                 false,
+			},
+			WebviewIsTransparent: true,
+			WindowIsTranslucent:  true,
+		},
 	})
 
 	if err != nil {

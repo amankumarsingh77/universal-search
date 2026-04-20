@@ -6,6 +6,7 @@ interface SearchBarProps {
   query: string;
   onQueryChange: (query: string) => void;
   isSearching: boolean;
+  isOffline: boolean;
   chips?: ChipDTO[];
   onChipRemove?: (clauseKey: string) => void;
   banner?: string | null;
@@ -16,6 +17,7 @@ export function SearchBar({
   query,
   onQueryChange,
   isSearching,
+  isOffline,
   chips = [],
   onChipRemove,
   banner,
@@ -29,7 +31,7 @@ export function SearchBar({
 
   return (
     <div style={styles.wrapper}>
-      <div style={styles.container}>
+      <div style={styles.container} {...{ '--wails-draggable': 'drag' } as React.HTMLAttributes<HTMLDivElement>}>
         <div style={styles.icon}>
           {isSearching ? (
             <svg width="20" height="20" viewBox="0 0 20 20" style={styles.spinner}>
@@ -43,6 +45,9 @@ export function SearchBar({
               />
             </svg>
           )}
+          {isOffline && (
+            <span style={styles.offlineDot} title="Offline — filename search only" />
+          )}
         </div>
         <input
           ref={inputRef}
@@ -54,10 +59,11 @@ export function SearchBar({
               onForceParseQuery();
             }
           }}
-          placeholder="Search your files..."
+          placeholder="Search files, images, videos…"
           style={styles.input}
           spellCheck={false}
           autoComplete="off"
+          {...{ '--wails-draggable': 'no-drag' } as React.HTMLAttributes<HTMLInputElement>}
         />
         {query && (
           <button
@@ -65,6 +71,7 @@ export function SearchBar({
             style={styles.clearButton}
             title="Clear search"
             aria-label="Clear search"
+            {...{ '--wails-draggable': 'no-drag' } as React.HTMLAttributes<HTMLButtonElement>}
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
               <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="var(--text-secondary)" strokeWidth="1.5" strokeLinecap="round" />
@@ -95,15 +102,14 @@ const styles: Record<string, React.CSSProperties> = {
   wrapper: {
     display: 'flex',
     flexDirection: 'column',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-surface)',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
     flexShrink: 0,
   },
   container: {
     display: 'flex',
     alignItems: 'center',
     padding: '0 16px',
-    height: '56px',
+    height: '64px',
     gap: '12px',
   },
   icon: {
@@ -111,6 +117,17 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    position: 'relative',
+  },
+  offlineDot: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: '50%',
+    background: 'var(--text-tertiary)',
+    border: '1.5px solid var(--bg-base)',
   },
   spinner: {
     animation: 'spin 1s linear infinite',
@@ -121,7 +138,8 @@ const styles: Record<string, React.CSSProperties> = {
     border: 'none',
     outline: 'none',
     color: 'var(--text-primary)',
-    fontSize: '16px',
+    fontSize: '22px',
+    fontWeight: 300,
     fontFamily: 'var(--font-sans)',
     lineHeight: '24px',
   },
@@ -139,7 +157,8 @@ const styles: Record<string, React.CSSProperties> = {
   chipRow: {
     display: 'flex',
     flexWrap: 'wrap',
-    padding: '4px 12px 6px',
+    padding: '0 12px 6px',
+    overflow: 'hidden',
   },
   banner: {
     padding: '4px 16px 6px',

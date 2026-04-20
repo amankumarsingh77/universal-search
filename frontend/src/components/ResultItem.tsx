@@ -55,44 +55,73 @@ function getSecondaryText(result: SearchResultDTO): string {
   return parts.join(' \u00b7 ');
 }
 
+function midTruncate(name: string, max = 40): string {
+  if (name.length <= max) return name;
+  const extIdx = name.lastIndexOf('.');
+  const ext = extIdx > 0 ? name.slice(extIdx) : '';
+  const keep = max - ext.length - 1;
+  return name.slice(0, Math.ceil(keep / 2)) + '…' + name.slice(extIdx - Math.floor(keep / 2));
+}
+
+function FileIcon({ fileType }: { fileType: string }) {
+  const colors: Record<string, string> = {
+    video: '#06B6D4',
+    image: '#F97316',
+    audio: '#EC4899',
+    code: '#A78BFA',
+    text: '#FAFAFA',
+  };
+  const color = colors[fileType] ?? 'rgba(255,255,255,0.3)';
+  const letters: Record<string, string> = {
+    video: '▶',
+    image: '⬛',
+    audio: '♪',
+    code: '</>',
+    text: '≡',
+  };
+  const letter = letters[fileType] ?? '?';
+  return (
+    <div style={{
+      width: 32, height: 32,
+      borderRadius: 6,
+      background: `${color}22`,
+      border: `1px solid ${color}44`,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: fileType === 'code' ? 9 : 14,
+      color,
+      flexShrink: 0,
+      fontFamily: 'var(--font-mono)',
+    }}>
+      {letter}
+    </div>
+  );
+}
+
+// suppress unused warning — kept for potential external use
+void getTypeIcon;
+
 export function ResultItem({ result, isSelected, onClick, onDoubleClick }: ResultItemProps) {
-  const hasThumbnail = result.thumbnailPath && result.thumbnailPath.length > 0;
   const shortDir = getShortDir(result.filePath);
   const scorePercent = Math.round(result.score * 100);
 
   return (
     <div
+      className="result-item"
+      role="option"
+      aria-selected={isSelected}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       style={{
         ...styles.container,
         background: isSelected ? 'var(--bg-selected)' : 'transparent',
-        borderLeft: isSelected ? '2px solid var(--accent-green)' : '2px solid transparent',
+        borderRadius: 'var(--radius-row)',
+        transform: isSelected ? 'scale(1.005)' : 'none',
+        transition: 'background 0.1s ease, transform 0.1s ease',
       }}
     >
-      <div style={styles.thumbnail}>
-        {hasThumbnail ? (
-          <img
-            src={`/localfile/${result.thumbnailPath}`}
-            alt=""
-            style={styles.thumbImage}
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-              (e.target as HTMLImageElement).nextElementSibling?.removeAttribute('style');
-            }}
-          />
-        ) : null}
-        <span
-          style={{
-            ...styles.thumbFallback,
-            display: hasThumbnail ? 'none' : 'flex',
-          }}
-        >
-          {getTypeIcon(result.fileType)}
-        </span>
-      </div>
+      <FileIcon fileType={result.fileType} />
       <div style={styles.info}>
-        <div style={styles.fileName}>{result.fileName}</div>
+        <div style={styles.fileName}>{midTruncate(result.fileName)}</div>
         {shortDir ? (
           <div style={styles.breadcrumb}>{shortDir}</div>
         ) : null}
@@ -101,7 +130,7 @@ export function ResultItem({ result, isSelected, onClick, onDoubleClick }: Resul
         </div>
       </div>
       {result.score > 0 ? (
-        <div style={styles.scoreBadge}>{scorePercent}%</div>
+        <span className="score-badge" style={styles.scoreBadge}>{scorePercent}%</span>
       ) : null}
     </div>
   );
@@ -111,48 +140,23 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
     alignItems: 'center',
-    paddingTop: '6px',
-    paddingBottom: '6px',
-    paddingLeft: '12px',
-    paddingRight: '12px',
-    minHeight: '56px',
+    padding: '10px 16px',
     cursor: 'pointer',
     gap: '10px',
-    transition: 'background 0.1s ease',
-  },
-  thumbnail: {
-    width: '40px',
-    height: '40px',
-    borderRadius: 'var(--radius-sm)',
-    overflow: 'hidden',
-    flexShrink: 0,
-    background: 'var(--bg-surface-2)',
-    position: 'relative',
-  },
-  thumbImage: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-  },
-  thumbFallback: {
-    width: '100%',
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '18px',
   },
   info: {
     flex: 1,
     overflow: 'hidden',
   },
   fileName: {
-    fontSize: '13px',
-    fontFamily: 'var(--font-mono)',
+    fontSize: '16px',
+    fontWeight: 600,
+    fontFamily: 'var(--font-sans)',
     color: 'var(--text-primary)',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
-    lineHeight: '18px',
+    lineHeight: '20px',
   },
   secondary: {
     fontSize: '11px',
@@ -177,5 +181,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-tertiary)',
     flexShrink: 0,
     alignSelf: 'center',
+    opacity: 0,
+    transition: 'opacity 0.15s ease',
   },
 };

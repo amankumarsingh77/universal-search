@@ -16,7 +16,7 @@ interface ResultsListProps {
 
 export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolders, hasApiKey, query, onAddFolder, onSetApiKey }: ResultsListProps) {
   const listRef = useRef<HTMLDivElement>(null);
-  const itemHeight = 56;
+  const itemHeight = 52;
 
   // Scroll selected item into view
   useEffect(() => {
@@ -39,7 +39,6 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
     return (
       <div style={styles.container}>
         <div style={styles.empty}>
-          <span style={styles.emptyIcon}>🔍</span>
           <span style={styles.emptyText}>No results for '{query}'</span>
         </div>
       </div>
@@ -51,7 +50,6 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
     return (
       <div style={styles.container}>
         <div style={styles.empty}>
-          <span style={styles.emptyIcon}>📁</span>
           <span style={styles.emptyText}>No folders indexed yet</span>
           <button style={styles.addFolderBtn} onClick={onAddFolder}>
             Add folder
@@ -66,7 +64,6 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
     return (
       <div style={styles.container}>
         <div style={styles.empty}>
-          <span style={styles.emptyIcon}>🔑</span>
           <span style={styles.emptyText}>Gemini API key not configured</span>
           <span style={styles.emptySubText}>Indexing and search require a valid API key.</span>
           <button style={styles.addFolderBtn} onClick={onSetApiKey}>
@@ -82,7 +79,6 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
     return (
       <div style={styles.container}>
         <div style={styles.empty}>
-          <span style={styles.emptyIcon}>🔍</span>
           <span style={styles.emptyText}>Type to search your files</span>
           {!hasApiKey && (
             <span style={styles.apiKeyWarning}>
@@ -99,20 +95,22 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
 
   // Results exist
   return (
-    <div ref={listRef} style={styles.container}>
-      {query && results.length > 0 && (
-        <div style={styles.resultCount}>
-          Showing {results.length} {results.length === 1 ? 'result' : 'results'}
-        </div>
-      )}
+    <div ref={listRef} style={styles.container} role="listbox" aria-label="Search results">
       {results.map((result, index) => (
-        <ResultItem
+        <div
           key={`${result.filePath}-${result.startTime}-${index}`}
-          result={result}
-          isSelected={index === selectedIndex}
-          onClick={() => onSelect(index)}
-          onDoubleClick={() => onOpen(result.filePath)}
-        />
+          style={{
+            animation: 'rowEnter 180ms ease both',
+            animationDelay: `${Math.min(index, 7) * 30}ms`,
+          }}
+        >
+          <ResultItem
+            result={result}
+            isSelected={index === selectedIndex}
+            onClick={() => onSelect(index)}
+            onDoubleClick={() => onOpen(result.filePath)}
+          />
+        </div>
       ))}
     </div>
   );
@@ -120,12 +118,10 @@ export function ResultsList({ results, selectedIndex, onSelect, onOpen, hasFolde
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    width: '290px',
     height: '100%',
     overflowY: 'auto',
     overflowX: 'hidden',
-    borderRight: '1px solid var(--border)',
-    flexShrink: 0,
+    padding: '8px',
   },
   empty: {
     display: 'flex',
@@ -136,20 +132,10 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '8px',
     padding: '24px',
   },
-  emptyIcon: {
-    fontSize: '32px',
-    opacity: 0.4,
-  },
   emptyText: {
     fontSize: '13px',
     color: 'var(--text-secondary)',
     textAlign: 'center',
-  },
-  resultCount: {
-    padding: '4px 12px',
-    fontSize: 11,
-    color: 'var(--text-tertiary)',
-    borderBottom: '1px solid var(--border)',
   },
   addFolderBtn: {
     color: 'var(--accent-green)',

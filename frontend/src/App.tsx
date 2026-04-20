@@ -11,7 +11,7 @@ import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
 import { useHideSuppression } from './hooks/useHideSuppression';
 import { EventsOn, EventsOff } from '../wailsjs/runtime/runtime';
-import { OpenFile, OpenFolder, HideWindow, GetFolders, GetHasGeminiKey, GetOnboarded, MarkOnboarded } from '../wailsjs/go/main/App';
+import { OpenFile, OpenFolder, HideWindow, GetFolders, GetHasGeminiKey, GetOnboarded, MarkOnboarded, ReindexNow } from '../wailsjs/go/main/App';
 
 function App() {
   const {
@@ -83,9 +83,17 @@ function App() {
   }, []);
 
   const selectedResult = results.length > 0 ? results[selectedIndex] ?? null : null;
+  const previewOpen = selectedResult !== null;
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
+        e.preventDefault();
+        ReindexNow();
+        setToast({ message: 'Re-indexing all folders…', type: 'success' });
+        return;
+      }
+
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'C') {
         e.preventDefault();
         if (results[selectedIndex]) {
@@ -155,16 +163,12 @@ function App() {
         query={query}
         onQueryChange={setQuery}
         isSearching={isSearching}
+        isOffline={isOffline}
         chips={chips}
         onChipRemove={removeChip}
         banner={banner}
         onForceParseQuery={forceParseQuery}
       />
-      {isOffline && (
-        <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)', textAlign: 'center', padding: '2px 0' }}>
-          Offline mode — filename search only
-        </div>
-      )}
       <div style={styles.body}>
         <ResultsList
           results={results}
@@ -177,7 +181,9 @@ function App() {
           onAddFolder={() => setShowFolderManager(true)}
           onSetApiKey={() => setShowApiKeyDialog(true)}
         />
-        <PreviewPanel result={selectedResult} onOpenFolder={(path) => { OpenFolder(path); HideWindow(); }} />
+        {previewOpen && (
+          <PreviewPanel result={selectedResult} onOpenFolder={(path) => { OpenFolder(path); HideWindow(); }} />
+        )}
       </div>
       {!indexingDismissed && (
         <IndexingBar
@@ -213,9 +219,8 @@ const styles: Record<string, React.CSSProperties> = {
   root: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100vh',
-    width: '100vw',
-    background: 'var(--bg-base)',
+    width: '100%',
+    height: '100%',
     overflow: 'hidden',
   },
   body: {

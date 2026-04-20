@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -13,22 +14,31 @@ import (
 
 const llmModelName = "gemini-2.5-flash-lite"
 
-// LLMParser parses a query using Gemini Flash-Lite with structured output.
+// generateContentFn is a function type that matches genai.Models.GenerateContent,
+// used as a testable seam in LLMParser.
+type generateContentFn func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error)
+
+// LLMParser parses a query using Gemini Flash-Lite with tool-call mode.
 type LLMParser struct {
-	client  *genai.Client
-	limiter interface{ Allow() bool }
-	model   string
-	logger  *slog.Logger
+	client   *genai.Client
+	limiter  interface{ Allow() bool }
+	model    string
+	logger   *slog.Logger
+	generate generateContentFn // testable seam; defaults to client.Models.GenerateContent
 }
 
 // NewLLMParser creates an LLMParser with the given client and rate limiter.
 func NewLLMParser(client *genai.Client, limiter interface{ Allow() bool }) *LLMParser {
-	return &LLMParser{
+	p := &LLMParser{
 		client:  client,
 		limiter: limiter,
 		model:   llmModelName,
 		logger:  slog.Default().WithGroup("llmparser"),
 	}
+	p.generate = func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+		return client.Models.GenerateContent(ctx, model, contents, config)
+	}
+	return p
 }
 
 // llmClause is the JSON representation of a clause returned by the LLM.
@@ -41,6 +51,7 @@ type llmClause struct {
 
 // llmResponse is the JSON schema the LLM must fill.
 type llmResponse struct {
+	Reasoning     string      `json:"reasoning"`
 	SemanticQuery string      `json:"semantic_query"`
 	Must          []llmClause `json:"must"`
 	MustNot       []llmClause `json:"must_not"`
@@ -83,12 +94,13 @@ func clauseSchema() *genai.Schema {
 	}
 }
 
-// buildResponseSchema returns the schema for the LLM response.
+// buildResponseSchema returns the schema for the LLM response (used as FunctionDeclaration.Parameters).
 func buildResponseSchema() *genai.Schema {
 	cs := clauseSchema()
 	return &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
+			"reasoning":      {Type: genai.TypeString},
 			"semantic_query": {Type: genai.TypeString},
 			"must":           {Type: genai.TypeArray, Items: cs},
 			"must_not":       {Type: genai.TypeArray, Items: cs},
@@ -97,84 +109,148 @@ func buildResponseSchema() *genai.Schema {
 	}
 }
 
-// Parse invokes Gemini with a structured response schema.
-// If rate-limited, timed out, or errored, returns grammarSpec unchanged.
-// Passes "Today is YYYY-MM-DD" in system prompt.
-func (p *LLMParser) Parse(ctx context.Context, query string, grammarSpec FilterSpec) (FilterSpec, error) {
-	if !p.limiter.Allow() {
-		return grammarSpec, nil
-	}
-
-	systemPrompt := buildSystemPrompt(time.Now())
-
-	config := &genai.GenerateContentConfig{
+// buildToolCallConfig returns a GenerateContentConfig that forces a single
+// tool call to emit_filters.
+func buildToolCallConfig(systemPrompt string) *genai.GenerateContentConfig {
+	return &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}},
-		ResponseMIMEType:  "application/json",
-		ResponseSchema:    buildResponseSchema(),
+		Tools: []*genai.Tool{{
+			FunctionDeclarations: []*genai.FunctionDeclaration{{
+				Name:        "emit_filters",
+				Description: "Emit the structured filter for the user's file search query.",
+				Parameters:  buildResponseSchema(),
+			}},
+		}},
+		ToolConfig: &genai.ToolConfig{
+			FunctionCallingConfig: &genai.FunctionCallingConfig{
+				Mode: genai.FunctionCallingConfigModeAny,
+			},
+		},
 	}
+}
 
-	resp, err := p.client.Models.GenerateContent(
-		ctx,
-		p.model,
-		genai.Text(query),
-		config,
-	)
-	if err != nil {
-		// Timeout or other error: return grammar spec unchanged.
-		return grammarSpec, nil
+// validateLLMResponse returns a non-nil error iff DetectStructuredFields(raw).Any()
+// AND len(spec.Must) == 0 AND len(spec.MustNot) == 0.
+func validateLLMResponse(raw string, spec FilterSpec) error {
+	sig := DetectStructuredFields(raw)
+	if !sig.Any() {
+		return nil
 	}
-
-	text := resp.Text()
-	if text == "" {
-		return grammarSpec, nil
+	if len(spec.Must) > 0 || len(spec.MustNot) > 0 {
+		return nil
 	}
+	return fmt.Errorf("query mentions %s but the response has no must/must_not clauses for them; emit at least one clause for the detected fields",
+		strings.Join(sig.Fields(), ", "))
+}
 
-	var llmResp llmResponse
-	if err := json.Unmarshal([]byte(text), &llmResp); err != nil {
-		p.logger.Debug("llm response unmarshal failed", "error", err, "raw", text)
-		return grammarSpec, nil
-	}
-
-	p.logger.Debug("llm raw response",
-		"raw_text", text,
-		"semantic_query", llmResp.SemanticQuery,
-		"must_count", len(llmResp.Must),
-		"must_not_count", len(llmResp.MustNot),
-		"should_count", len(llmResp.Should),
-	)
-	for i, c := range llmResp.Must {
-		p.logger.Debug("llm must clause", "index", i, "field", c.Field, "op", c.Op, "value", c.Value)
-	}
-
-	llmSpec := FilterSpec{
+// convertLLMResponseToSpec converts an llmResponse struct into a FilterSpec.
+// Reasoning is automatically discarded (FilterSpec has no such field).
+func convertLLMResponseToSpec(llmResp llmResponse) FilterSpec {
+	spec := FilterSpec{
 		SemanticQuery: strings.TrimSpace(llmResp.SemanticQuery),
 		Source:        SourceLLM,
 	}
-
-	// Convert and validate clauses.
 	for _, c := range llmResp.Must {
 		if clause, ok := llmClauseToClause(c); ok {
-			llmSpec.Must = append(llmSpec.Must, clause)
-		} else {
-			p.logger.Debug("llm must clause dropped", "field", c.Field, "op", c.Op, "value", c.Value)
+			spec.Must = append(spec.Must, clause)
 		}
 	}
 	for _, c := range llmResp.MustNot {
 		if clause, ok := llmClauseToClause(c); ok {
-			llmSpec.MustNot = append(llmSpec.MustNot, clause)
-		} else {
-			p.logger.Debug("llm must_not clause dropped", "field", c.Field, "op", c.Op, "value", c.Value)
+			spec.MustNot = append(spec.MustNot, clause)
 		}
 	}
 	for _, c := range llmResp.Should {
 		if clause, ok := llmClauseToClause(c); ok {
-			llmSpec.Should = append(llmSpec.Should, clause)
-		} else {
-			p.logger.Debug("llm should clause dropped", "field", c.Field, "op", c.Op, "value", c.Value)
+			spec.Should = append(spec.Should, clause)
 		}
 	}
+	return spec
+}
 
-	return llmSpec, nil
+// decodeToolCallResponse extracts a FilterSpec from a GenerateContentResponse
+// that contains a function call to emit_filters.
+func decodeToolCallResponse(resp *genai.GenerateContentResponse) (FilterSpec, error) {
+	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
+		return FilterSpec{}, fmt.Errorf("no candidates in response")
+	}
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if part.FunctionCall == nil {
+			continue
+		}
+		argsJSON, err := json.Marshal(part.FunctionCall.Args)
+		if err != nil {
+			return FilterSpec{}, fmt.Errorf("marshal function call args: %w", err)
+		}
+		var llmResp llmResponse
+		if err := json.Unmarshal(argsJSON, &llmResp); err != nil {
+			return FilterSpec{}, fmt.Errorf("unmarshal function call args: %w", err)
+		}
+		return convertLLMResponseToSpec(llmResp), nil
+	}
+	return FilterSpec{}, fmt.Errorf("no function call in response")
+}
+
+// parseWithRetry calls Gemini with tool-call mode, validates the response, and
+// retries up to 2 times (3 total attempts) appending the validator error as
+// a user-role turn. On transport error on the first call, returns grammarSpec.
+// On exhausted retries, returns the last response (never errors out).
+func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpec FilterSpec) (FilterSpec, error) {
+	const maxRetries = 2
+	systemPrompt := buildSystemPrompt(time.Now())
+	config := buildToolCallConfig(systemPrompt)
+
+	var lastSpec FilterSpec
+	contents := []*genai.Content{
+		{Role: "user", Parts: []*genai.Part{{Text: query}}},
+	}
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		resp, err := p.generate(ctx, p.model, contents, config)
+		if err != nil {
+			if attempt == 0 {
+				return grammarSpec, nil
+			}
+			return lastSpec, nil
+		}
+
+		spec, decodeErr := decodeToolCallResponse(resp)
+		if decodeErr != nil {
+			p.logger.Debug("decode tool-call response failed", "error", decodeErr, "attempt", attempt)
+			if attempt == maxRetries {
+				return lastSpec, nil
+			}
+			contents = append(contents, &genai.Content{
+				Role:  "user",
+				Parts: []*genai.Part{{Text: "Your previous response could not be parsed: " + decodeErr.Error() + ". Try again."}},
+			})
+			continue
+		}
+
+		lastSpec = spec
+		if err := validateLLMResponse(query, spec); err == nil {
+			return spec, nil
+		} else {
+			p.logger.Debug("validator failed", "error", err, "attempt", attempt)
+			if attempt == maxRetries {
+				return spec, nil
+			}
+			contents = append(contents, &genai.Content{
+				Role:  "user",
+				Parts: []*genai.Part{{Text: err.Error()}},
+			})
+		}
+	}
+	return lastSpec, nil
+}
+
+// Parse invokes Gemini with tool-call mode.
+// If rate-limited, timed out, or errored, returns grammarSpec unchanged.
+func (p *LLMParser) Parse(ctx context.Context, query string, grammarSpec FilterSpec) (FilterSpec, error) {
+	if !p.limiter.Allow() {
+		return grammarSpec, nil
+	}
+	return p.parseWithRetry(ctx, query, grammarSpec)
 }
 
 // resolveDateToUnix converts a date string to a Unix int64 for use in modified_at

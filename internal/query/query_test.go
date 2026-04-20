@@ -390,6 +390,13 @@ func TestShouldInvokeLLM_TableDriven(t *testing.T) {
 		// "go code" contains "code" which is a file type keyword → YES
 		{"go code", true},
 		{"meeting notes", false},
+		// Structured-token detection (REQ-008): short queries that the older
+		// heuristics missed but DetectStructuredFields catches.
+		{"all .py files", true},          // bare extension
+		{"videos over 100MB", true},      // size unit (also kind word)
+		{"files in Downloads", true},     // path root folder
+		{"PNG images", true},               // "images" plural matches "image" kind synonym
+		{"large documents over 1MB", true}, // size adjective + size unit + kind
 		// Over 500 chars → NO (tested separately)
 	}
 	for _, tc := range cases {

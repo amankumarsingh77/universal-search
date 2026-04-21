@@ -7,6 +7,7 @@ import (
 	"strconv"
 )
 
+// ExtractPreviewClip writes a short ffmpeg clip centered on the given timestamp.
 func ExtractPreviewClip(videoPath, outputPath string, timestamp, duration float64) error {
 	if _, err := os.Stat(videoPath); err != nil {
 		return fmt.Errorf("video file not found: %w", err)

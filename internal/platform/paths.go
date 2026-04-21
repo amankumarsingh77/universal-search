@@ -7,6 +7,7 @@ import (
 	"runtime"
 )
 
+// DataDir returns the platform-specific application data directory, creating it if needed.
 func DataDir() (string, error) {
 	var base string
 	switch runtime.GOOS {
@@ -37,6 +38,7 @@ func DataDir() (string, error) {
 	return dir, os.MkdirAll(dir, 0o755)
 }
 
+// DBPath returns the absolute path to the SQLite metadata database file.
 func DBPath() (string, error) {
 	dir, err := DataDir()
 	if err != nil {
@@ -45,6 +47,7 @@ func DBPath() (string, error) {
 	return filepath.Join(dir, "metadata.db"), nil
 }
 
+// IndexPath returns the absolute path to the HNSW vector index file.
 func IndexPath() (string, error) {
 	dir, err := DataDir()
 	if err != nil {
@@ -53,6 +56,7 @@ func IndexPath() (string, error) {
 	return filepath.Join(dir, "vectors.hnsw"), nil
 }
 
+// ThumbnailDir returns the directory where generated thumbnails are cached.
 func ThumbnailDir() (string, error) {
 	dir, err := DataDir()
 	if err != nil {

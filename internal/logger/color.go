@@ -45,10 +45,12 @@ func NewColorHandler(w io.Writer, opts *slog.HandlerOptions) *ColorHandler {
 	}
 }
 
+// Enabled reports whether the handler handles records at the given level.
 func (h *ColorHandler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= h.level.Level()
 }
 
+// Handle formats and writes a log record with ANSI colors when supported.
 func (h *ColorHandler) Handle(_ context.Context, r slog.Record) error {
 	levelColor := h.colorForLevel(r.Level)
 	levelStr := r.Level.String()
@@ -98,6 +100,7 @@ func (h *ColorHandler) writeAttr(prefix string, a slog.Attr) {
 	}
 }
 
+// WithAttrs returns a new handler whose records carry the given attrs.
 func (h *ColorHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &ColorHandler{
 		w:       h.w,
@@ -109,6 +112,7 @@ func (h *ColorHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	}
 }
 
+// WithGroup returns a new handler that prefixes attrs with the given group name.
 func (h *ColorHandler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h

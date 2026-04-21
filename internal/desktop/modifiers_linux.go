@@ -14,6 +14,7 @@ var modCmd = hotkey.Mod4
 // modAlt maps to the Alt key (Mod1) on Linux.
 var modAlt = hotkey.Mod1
 
+// HumanReadableHotkey formats a modifier+key combination as a user-facing string.
 func HumanReadableHotkey(mods []hotkey.Modifier, key hotkey.Key) string {
 	var parts []string
 	for _, m := range mods {

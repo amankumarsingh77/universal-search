@@ -22,7 +22,7 @@ func newTestComponents(t *testing.T) (*store.Store, *vectorstore.Index, string) 
 		t.Fatalf("store: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	idx := vectorstore.NewIndex(logger)
+	idx := vectorstore.NewDefaultIndex(logger)
 	indexPath := filepath.Join(t.TempDir(), "test.hnsw")
 	return s, idx, indexPath
 }
@@ -162,7 +162,7 @@ func TestIntegration_ReconcileEmptyDB(t *testing.T) {
 // the final .graph and .map files in place and removes all .tmp files.
 func TestIntegration_AtomicSave_NoTmpFilesAfterSave(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	idx := vectorstore.NewIndex(logger)
+	idx := vectorstore.NewDefaultIndex(logger)
 
 	vec1 := make([]float32, 768)
 	vec2 := make([]float32, 768)
@@ -217,7 +217,7 @@ func TestIntegration_LoadIndex_FallbackOnCorrupt(t *testing.T) {
 	}
 
 	// App.go fallback: create NewIndex when LoadIndex fails.
-	idx := vectorstore.NewIndex(logger)
+	idx := vectorstore.NewDefaultIndex(logger)
 	if idx == nil {
 		t.Fatal("expected NewIndex to return a valid index, got nil")
 	}

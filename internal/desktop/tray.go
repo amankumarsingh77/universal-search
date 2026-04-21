@@ -6,6 +6,7 @@ import (
 	"github.com/energye/systray"
 )
 
+// TrayManager owns the system tray icon and its menu lifecycle.
 type TrayManager struct {
 	app    AppController
 	icon   []byte
@@ -13,6 +14,7 @@ type TrayManager struct {
 	done   chan struct{}
 }
 
+// NewTrayManager constructs a TrayManager with the given app controller and icon bytes.
 func NewTrayManager(app AppController, icon []byte, logger *slog.Logger) *TrayManager {
 	return &TrayManager{
 		app:    app,
@@ -22,10 +24,12 @@ func NewTrayManager(app AppController, icon []byte, logger *slog.Logger) *TrayMa
 	}
 }
 
+// Start registers the tray icon and wires up its menu actions.
 func (t *TrayManager) Start() {
 	systray.Register(t.onReady, t.onExit)
 }
 
+// Stop removes the tray icon and releases its resources.
 func (t *TrayManager) Stop() {
 	close(t.done)
 	systray.Quit()

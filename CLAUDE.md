@@ -29,6 +29,17 @@ The app has three main layers:
 
 Video pipeline follows sentrysearch patterns: 30s chunks with 5s overlap, 480p/5fps preprocessing, still-frame detection, direct video-to-embedding (no captioning).
 
+## Backend layout
+
+The Wails-bound `App` lives in `internal/app/` and is split by concern across small files:
+`app.go` (struct + constructor + core helpers), `folders.go` (indexed-folder and ignore-pattern management), `indexing.go` (reindex entrypoints), `search.go` + `search_filters.go` + `search_chips.go` (query pipeline and chip DTOs), `settings.go` (key-value settings + hotkey), `system.go` (window, tray, file preview), `stats.go` (debug stats), `lifecycle.go` (startup/shutdown), `dto.go` (shared DTOs), `snapshot.go` (embedder-state snapshot). Every file in `internal/app/` is kept under 400 lines and enforced by `scripts/check-file-size.sh`.
+
+Supporting packages: `internal/indexer/` (pipeline, reconcile, rescan), `internal/embedder/` (Gemini + Fake + RateLimiter — these are the only embedder implementations shipped), `internal/search/` (planner, rerank, relaxation, filename fallback), `internal/query/` (grammar, LLM parse, date normalization, typo correction, merge, cache), `internal/store/` (SQLite with a schema migrator under `internal/store/migrations/`), `internal/vectorstore/` (HNSW wrapper), `internal/chunker/`, `internal/watcher/`, `internal/desktop/` (hotkey + tray), `internal/platform/` (OS-specific paths), `internal/logger/` (color + multi-handler slog), `internal/config/` (TOML loader + defaults), and `internal/apperr/` (stable error-code vocabulary that the frontend maps to user-facing messages).
+
+## Customization
+
+Runtime tuning lives in `config.toml` — the canonical tuning surface for indexing concurrency, embedder batch size and rate limits, HNSW parameters, search thresholds, and NL-query timeouts. The file is loaded from `~/.config/universal-search/config.toml` on Linux/macOS and `%APPDATA%\universal-search\config.toml` on Windows. Missing file and missing keys fall back to the values documented in `internal/config/defaults.toml`; consult that file for the full set of tunables and their defaults. Stable error codes surfaced by the Wails bindings are defined in `internal/apperr/` so the frontend can translate them into user-facing messages without string matching.
+
 ## Rules
 
 - **Before writing any code, verify the correct syntax and API usage.** Use Context7 MCP (`resolve-library-id` then `query-docs`) or fetch official documentation to confirm function signatures, package APIs, and framework patterns. Do not rely on memory alone — always reference current docs.

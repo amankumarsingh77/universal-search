@@ -27,6 +27,7 @@ type SettingsStore interface {
 	SetSetting(key, value string) error
 }
 
+// HotkeyManager owns the global hotkey registration lifecycle.
 type HotkeyManager struct {
 	app    AppController
 	store  SettingsStore
@@ -35,6 +36,7 @@ type HotkeyManager struct {
 	logger *slog.Logger
 }
 
+// NewHotkeyManager constructs a HotkeyManager bound to the given app and store.
 func NewHotkeyManager(app AppController, store SettingsStore, logger *slog.Logger) *HotkeyManager {
 	return &HotkeyManager{
 		app:    app,
@@ -43,6 +45,7 @@ func NewHotkeyManager(app AppController, store SettingsStore, logger *slog.Logge
 	}
 }
 
+// Start registers the configured hotkey and begins listening for key events.
 func (h *HotkeyManager) Start() error {
 	combo, err := h.store.GetSetting("global_hotkey", DefaultHotkey())
 	if err != nil {
@@ -78,6 +81,7 @@ func (h *HotkeyManager) listen() {
 	}
 }
 
+// Stop unregisters the hotkey and halts the listen loop.
 func (h *HotkeyManager) Stop() {
 	if h.stopCh != nil {
 		close(h.stopCh)
@@ -87,6 +91,7 @@ func (h *HotkeyManager) Stop() {
 	}
 }
 
+// ChangeHotkey re-registers the global hotkey to the given combo string.
 func (h *HotkeyManager) ChangeHotkey(combo string) error {
 	mods, key, err := ParseHotkey(combo)
 	if err != nil {

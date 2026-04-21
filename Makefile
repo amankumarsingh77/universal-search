@@ -1,4 +1,4 @@
-.PHONY: dev build test lint lint-go lint-frontend fmt clean
+.PHONY: dev build test test-unit test-integration test-e2e test-all check-file-size lint lint-go lint-frontend fmt clean
 
 # Development mode with hot reload
 dev:
@@ -11,6 +11,25 @@ build:
 # Run all tests
 test:
 	go test ./...
+
+# Unit tests — default build, under 30s wall-clock
+test-unit:
+	go test -count=1 -timeout 60s ./...
+
+# Integration tests — real tempdir SQLite + HNSW, real pipeline goroutines
+test-integration:
+	go test -count=1 -timeout 300s -tags integration ./...
+
+# End-to-end tests — deterministic fixtures + FakeEmbedder
+test-e2e:
+	go test -count=1 -timeout 300s -tags e2e ./...
+
+# Run all three test layers sequentially
+test-all: test-unit test-integration test-e2e
+
+# REF-021: no .go file in internal/app/ may exceed 400 lines
+check-file-size:
+	@bash scripts/check-file-size.sh
 
 # Run all linters
 lint: lint-go lint-frontend

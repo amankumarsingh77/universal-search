@@ -97,14 +97,27 @@ These legacy formats need LibreOffice installed for conversion to PDF before emb
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
 # Development mode (hot reload)
-wails dev
+# -tags webkit2_41 required on Linux with webkit2gtk-4.1 (Ubuntu 22.04+)
+wails dev -tags webkit2_41
 
 # Build production binary
-wails build
+wails build -tags webkit2_41
 
-# Run Go tests
-go test ./...
+# Run tests (three tiers)
+make test-unit          # default build, under 30s
+make test-integration   # -tags integration
+make test-e2e           # -tags e2e
+make test-all           # all three, sequentially
 ```
+
+## Configuration
+
+Runtime tunables (indexing concurrency, embedder batch size, rate limits, HNSW parameters, search thresholds, NL-query timeouts) live in `config.toml`:
+
+- Linux/macOS: `~/.config/universal-search/config.toml`
+- Windows: `%APPDATA%\universal-search\config.toml`
+
+Missing file or missing keys fall back to the defaults in `internal/config/defaults.toml`.
 
 ## Tech Stack
 

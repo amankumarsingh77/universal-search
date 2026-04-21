@@ -1,0 +1,60 @@
+schema_version = 1
+
+[app]
+hotkey = "cmd+shift+space"
+theme = "system"
+shutdown_timeout_ms = 15000
+
+[indexing]
+workers = 4
+job_queue_size = 64
+save_every_n = 50
+rate_limit_per_minute = 55
+batch_size = 100
+
+[embedder]
+provider = "gemini"
+model = "gemini-embedding-2-preview"
+dimensions = 768
+
+[embedder.gemini]
+rate_limit_per_minute = 55
+batch_size = 100
+retry_max_attempts = 5
+retry_initial_backoff_ms = 2000
+retry_max_backoff_ms = 60000
+
+[hnsw]
+m = 16
+ml = 0.25
+ef_search = 200
+ef_construction = 200
+distance = "cosine"
+
+[search]
+brute_force_threshold = 5000
+over_fetch_multiplier = 5
+recency_boost_multiplier = 1.2
+recency_window_days = 30
+relaxation_enabled = true
+relaxation_drop_order = ["modified_at", "size_bytes", "path", "file_type", "extension"]
+filename_merge_enabled = true
+
+[query]
+llm_model = "gemini-2.5-flash-lite"
+llm_timeout_ms = 500
+llm_max_retries = 2
+trigger_min_tokens = 6
+trigger_max_chars = 500
+nl_enabled = true
+cache_ttl_hours = 168
+
+[chunking]
+text_max_tokens = 512
+text_overlap_tokens = 64
+video_chunk_seconds = 30
+video_overlap_seconds = 5
+
+[logging]
+level = "info"
+format = "text"

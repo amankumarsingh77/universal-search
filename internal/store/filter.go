@@ -90,7 +90,7 @@ func isUnixTimestamp(v any) bool {
 // so that they compare correctly against the ISO-8601 text values stored by the driver.
 func rhsExpr(field FieldEnum, op Op, value any) (rhs string, args []any) {
 	if field == FieldModifiedAt && isUnixTimestamp(value) {
-		return fmt.Sprintf("datetime(?, 'unixepoch')"), []any{value}
+		return "datetime(?, 'unixepoch')", []any{value}
 	}
 	return "?", []any{value}
 }

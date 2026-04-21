@@ -1272,3 +1272,89 @@ func TestUpsertFile_UpdatesExisting(t *testing.T) {
 		t.Fatalf("expected updated hash def456, got %s", got.ContentHash)
 	}
 }
+
+// TestInsertChunk_WritesEmbeddingModelAndDims (REF-060): InsertChunk stores
+// the EmbeddingModel and EmbeddingDims fields from the ChunkRecord.
+func TestInsertChunk_WritesEmbeddingModelAndDims(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	fileID, _ := s.UpsertFile(FileRecord{
+		Path: "/tmp/x.mp4", FileType: "video", Extension: ".mp4",
+		SizeBytes: 1, ModifiedAt: time.Now(), IndexedAt: time.Now(),
+	})
+
+	if _, err := s.InsertChunk(ChunkRecord{
+		FileID:         fileID,
+		VectorID:       "v1",
+		ChunkIndex:     0,
+		EmbeddingModel: "fake-a",
+		EmbeddingDims:  64,
+	}); err != nil {
+		t.Fatalf("InsertChunk: %v", err)
+	}
+
+	var model string
+	var dims int
+	if err := s.db.QueryRow(
+		`SELECT embedding_model, embedding_dims FROM chunks WHERE vector_id = ?`, "v1",
+	).Scan(&model, &dims); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if model != "fake-a" {
+		t.Errorf("embedding_model = %q, want %q", model, "fake-a")
+	}
+	if dims != 64 {
+		t.Errorf("embedding_dims = %d, want 64", dims)
+	}
+}
+
+// TestStore_ModelsInIndex_ReportsDistinctModels (REF-065): ModelsInIndex
+// returns the distinct embedding_model values seen across chunks.
+func TestStore_ModelsInIndex_ReportsDistinctModels(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	fileID, _ := s.UpsertFile(FileRecord{
+		Path: "/tmp/a", FileType: "text", Extension: ".txt",
+		SizeBytes: 1, ModifiedAt: time.Now(), IndexedAt: time.Now(),
+	})
+	if _, err := s.InsertChunk(ChunkRecord{FileID: fileID, VectorID: "a1", ChunkIndex: 0, EmbeddingModel: "fake-a", EmbeddingDims: 64}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertChunk(ChunkRecord{FileID: fileID, VectorID: "a2", ChunkIndex: 1, EmbeddingModel: "fake-a", EmbeddingDims: 64}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.InsertChunk(ChunkRecord{FileID: fileID, VectorID: "b1", ChunkIndex: 2, EmbeddingModel: "fake-b", EmbeddingDims: 64}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.ModelsInIndex()
+	if err != nil {
+		t.Fatalf("ModelsInIndex: %v", err)
+	}
+	m := map[string]bool{}
+	for _, v := range got {
+		m[v] = true
+	}
+	if !m["fake-a"] || !m["fake-b"] {
+		t.Errorf("expected both fake-a and fake-b, got %v", got)
+	}
+	if len(got) != 2 {
+		t.Errorf("expected 2 distinct models, got %d (%v)", len(got), got)
+	}
+
+	count, err := s.CountChunksByModel("fake-a")
+	if err != nil {
+		t.Fatalf("CountChunksByModel: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("CountChunksByModel(fake-a) = %d, want 2", count)
+	}
+}

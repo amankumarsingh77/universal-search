@@ -33,90 +33,39 @@ type FileRecord struct {
 
 // ChunkRecord represents a chunk of a file (e.g., a time segment of video/audio).
 type ChunkRecord struct {
-	ID         int64
-	FileID     int64
-	VectorID   string
-	ChunkIndex int
-	StartTime  float64
-	EndTime    float64
-	VectorBlob []byte // optional: raw little-endian float32 vector stored inline
+	ID             int64
+	FileID         int64
+	VectorID       string
+	ChunkIndex     int
+	StartTime      float64
+	EndTime        float64
+	VectorBlob     []byte // optional: raw little-endian float32 vector stored inline
+	EmbeddingModel string
+	EmbeddingDims  int
 }
 
 // SearchResult joins chunk and file data for search responses.
 type SearchResult struct {
-	File       FileRecord
-	ChunkID    int64
-	VectorID   string
-	StartTime  float64
-	EndTime    float64
-	Distance   float32 // cosine distance from vectorstore (0=identical, 2=opposite)
-	FinalScore float32 // reranked score (0–1+); set by search.Rerank, 0 if not reranked
+	File           FileRecord
+	ChunkID        int64
+	VectorID       string
+	StartTime      float64
+	EndTime        float64
+	Distance       float32 // cosine distance from vectorstore (0=identical, 2=opposite)
+	FinalScore     float32 // reranked score (0–1+); set by search.Rerank, 0 if not reranked
+	EmbeddingModel string  // empty if the chunk predates migration 004
 }
-
-const schema = `
-CREATE TABLE IF NOT EXISTS files (
-	id            INTEGER PRIMARY KEY AUTOINCREMENT,
-	path          TEXT NOT NULL UNIQUE,
-	file_type     TEXT NOT NULL,
-	extension     TEXT NOT NULL,
-	size_bytes    INTEGER NOT NULL,
-	modified_at   DATETIME NOT NULL,
-	indexed_at    DATETIME NOT NULL,
-	content_hash  TEXT NOT NULL DEFAULT '',
-	thumbnail_path TEXT NOT NULL DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_files_path ON files(path);
-CREATE INDEX IF NOT EXISTS idx_files_content_hash ON files(content_hash);
-CREATE INDEX IF NOT EXISTS idx_files_type ON files(file_type);
-CREATE INDEX IF NOT EXISTS idx_files_ext ON files(extension);
-CREATE INDEX IF NOT EXISTS idx_files_modified ON files(modified_at);
-
-CREATE TABLE IF NOT EXISTS chunks (
-	id          INTEGER PRIMARY KEY AUTOINCREMENT,
-	file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
-	vector_id   TEXT NOT NULL UNIQUE,
-	chunk_index INTEGER NOT NULL,
-	start_time  REAL NOT NULL DEFAULT 0,
-	end_time    REAL NOT NULL DEFAULT 0
-);
-
-CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_vector_id ON chunks(vector_id);
-
-CREATE TABLE IF NOT EXISTS indexed_folders (
-	id   INTEGER PRIMARY KEY AUTOINCREMENT,
-	path TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS excluded_patterns (
-	id      INTEGER PRIMARY KEY AUTOINCREMENT,
-	pattern TEXT NOT NULL UNIQUE
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-	key   TEXT PRIMARY KEY,
-	value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS query_cache (
-	query      TEXT PRIMARY KEY,
-	vector     BLOB NOT NULL,
-	created_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS parsed_query_cache (
-	query_text_normalized TEXT PRIMARY KEY,
-	spec_json             TEXT NOT NULL,
-	created_at            INTEGER NOT NULL,
-	last_used_at          INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_parsed_query_last_used ON parsed_query_cache(last_used_at);
-`
 
 // NewStore opens the SQLite database at dsn, enables WAL mode and foreign keys,
 // and runs schema migrations.
 func NewStore(dsn string, logger *slog.Logger) (*Store, error) {
+	return NewStoreWithBackfill(dsn, logger, nil)
+}
+
+// NewStoreWithBackfill opens the database and runs migrations, invoking the
+// given backfill callback if migration 004 applies during this open (typically
+// the first launch after upgrading from a pre-embedding-model-gate install).
+func NewStoreWithBackfill(dsn string, logger *slog.Logger, backfill BackfillFunc) (*Store, error) {
 	log := logger.WithGroup("store")
 	log.Info("opening database", "path", dsn)
 
@@ -125,29 +74,19 @@ func NewStore(dsn string, logger *slog.Logger) (*Store, error) {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
-	// Enable WAL mode for better concurrent read performance.
 	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
-	// Enable foreign key enforcement.
 	if _, err := db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
-	// Run migrations.
-	if _, err := db.Exec(schema); err != nil {
+	if err := ApplyWithBackfill(db, log, backfill); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("run migrations: %w", err)
-	}
-
-	// Add vector_blob column to chunks if it doesn't exist yet (idempotent).
-	_, err = db.Exec(`ALTER TABLE chunks ADD COLUMN vector_blob BLOB`)
-	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		db.Close()
-		return nil, fmt.Errorf("adding vector_blob column: %w", err)
 	}
 
 	log.Info("database ready")
@@ -215,10 +154,13 @@ func (s *Store) InsertChunk(c ChunkRecord) (int64, error) {
 		blob = c.VectorBlob
 	}
 	res, err := s.db.Exec(`
-		INSERT INTO chunks (file_id, vector_id, chunk_index, start_time, end_time, vector_blob)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(vector_id) DO UPDATE SET vector_blob = excluded.vector_blob
-	`, c.FileID, c.VectorID, c.ChunkIndex, c.StartTime, c.EndTime, blob)
+		INSERT INTO chunks (file_id, vector_id, chunk_index, start_time, end_time, vector_blob, embedding_model, embedding_dims)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(vector_id) DO UPDATE SET
+			vector_blob     = excluded.vector_blob,
+			embedding_model = excluded.embedding_model,
+			embedding_dims  = excluded.embedding_dims
+	`, c.FileID, c.VectorID, c.ChunkIndex, c.StartTime, c.EndTime, blob, c.EmbeddingModel, c.EmbeddingDims)
 	if err != nil {
 		return 0, fmt.Errorf("insert chunk: %w", err)
 	}
@@ -250,7 +192,7 @@ func (s *Store) GetChunksByVectorIDs(vectorIDs []string) ([]SearchResult, error)
 
 	query := fmt.Sprintf(`
 		SELECT f.id, f.path, f.file_type, f.extension, f.size_bytes, f.modified_at, f.indexed_at, f.content_hash, f.thumbnail_path,
-		       c.id, c.vector_id, c.start_time, c.end_time
+		       c.id, c.vector_id, c.start_time, c.end_time, c.embedding_model
 		FROM chunks c
 		JOIN files f ON f.id = c.file_id
 		WHERE c.vector_id IN (%s)
@@ -269,7 +211,7 @@ func (s *Store) GetChunksByVectorIDs(vectorIDs []string) ([]SearchResult, error)
 			&r.File.ID, &r.File.Path, &r.File.FileType, &r.File.Extension,
 			&r.File.SizeBytes, &r.File.ModifiedAt, &r.File.IndexedAt,
 			&r.File.ContentHash, &r.File.ThumbnailPath,
-			&r.ChunkID, &r.VectorID, &r.StartTime, &r.EndTime,
+			&r.ChunkID, &r.VectorID, &r.StartTime, &r.EndTime, &r.EmbeddingModel,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan search result: %w", err)
@@ -870,6 +812,37 @@ func BlobToVec(blob []byte) ([]float32, error) {
 
 // blobToVec is an internal alias kept for callers within this package.
 func blobToVec(blob []byte) ([]float32, error) { return BlobToVec(blob) }
+
+// ModelsInIndex returns the distinct embedding_model values currently stored
+// in the chunks table. Empty-string values (present after migration 004 but
+// before backfill has committed a real model) are excluded.
+func (s *Store) ModelsInIndex() ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT embedding_model FROM chunks WHERE embedding_model != ''`)
+	if err != nil {
+		return nil, fmt.Errorf("models in index: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err != nil {
+			return nil, fmt.Errorf("scan model: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// CountChunksByModel returns the number of chunk rows whose embedding_model
+// equals modelID.
+func (s *Store) CountChunksByModel(modelID string) (int, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM chunks WHERE embedding_model = ?`, modelID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count chunks by model: %w", err)
+	}
+	return count, nil
+}
 
 // HasMissingVectorBlobs returns true if any chunks row has NULL vector_blob.
 func (s *Store) HasMissingVectorBlobs() (bool, error) {

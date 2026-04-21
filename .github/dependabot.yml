@@ -42,6 +42,10 @@ updates:
           - "react"
           - "react-dom"
           - "@types/react*"
+      vite-stack:
+        patterns:
+          - "vite"
+          - "@vitejs/*"
       frontend-minor-patch:
         applies-to: version-updates
         dependency-type: production

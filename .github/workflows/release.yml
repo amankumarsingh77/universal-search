@@ -88,16 +88,11 @@ jobs:
         run: |
           cd build/bin
           zip -r findo-darwin-universal.zip findo.app
-          echo "ARTIFACT_PATH=build/bin/findo-darwin-universal.zip" >> $GITHUB_ENV
-
-      - name: Set artifact path (non-macOS)
-        if: runner.os != 'macOS'
-        run: echo "ARTIFACT_PATH=${{ matrix.artifact }}" >> $GITHUB_ENV
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: ${{ env.ARTIFACT_PATH }}
+          path: ${{ runner.os == 'macOS' && 'build/bin/findo-darwin-universal.zip' || matrix.artifact }}
           retention-days: 7
 
   release:

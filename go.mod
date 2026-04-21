@@ -33,7 +33,6 @@ require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
-	github.com/google/renameio v1.0.1 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
@@ -76,4 +75,4 @@ require (
 	google.golang.org/protobuf v1.36.1 // indirect
 )
 
-replace github.com/TFMV/hnsw => github.com/amankumarsingh77/hnsw v0.4.1-0.20260411114551-f29a1414598c
+replace github.com/TFMV/hnsw => github.com/amankumarsingh77/hnsw v0.4.1-0.20260421170617-c66fec885374

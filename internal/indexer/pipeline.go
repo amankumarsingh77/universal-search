@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 	"universal-search/internal/vectorstore"
 )
 
+// IndexStatus is a point-in-time snapshot of indexing progress and state.
 type IndexStatus struct {
 	TotalFiles    int
 	IndexedFiles  int
@@ -39,7 +41,17 @@ const (
 	jobSingleFile
 )
 
-const saveInterval = 50
+// PipelineConfig holds tunable parameters for the indexing pipeline.
+type PipelineConfig struct {
+	Workers      int
+	JobQueueSize int
+	SaveEveryN   int
+}
+
+// DefaultPipelineConfig returns the historical defaults used before config wiring.
+func DefaultPipelineConfig() PipelineConfig {
+	return PipelineConfig{Workers: 4, JobQueueSize: 64, SaveEveryN: 50}
+}
 
 // errStaleGeneration signals that a file's embedding results were discarded
 // because a new generation (e.g. from ResetStatus) superseded the run. Callers
@@ -54,19 +66,14 @@ type indexJob struct {
 	force           bool
 }
 
+// OnJobDone is a callback invoked after each indexing job completes.
 type OnJobDone func()
 
-// embIface is the subset of embedder.Embedder used by the pipeline.
-// Extracted as an interface so tests can inject a mock.
-type embIface interface {
-	EmbedBatch(ctx context.Context, chunks []embedder.ChunkInput) ([][]float32, error)
-}
-
+// Pipeline coordinates file indexing across worker goroutines.
 type Pipeline struct {
 	store    *store.Store
 	index    *vectorstore.Index
-	embedder *embedder.Embedder
-	mockEmb  embIface // non-nil in tests; takes priority over embedder
+	embedder embedder.Embedder
 	thumbDir string
 	logger   *slog.Logger
 
@@ -84,15 +91,28 @@ type Pipeline struct {
 	pendingJobs atomic.Int32
 	generation  atomic.Int32
 	workerCount int
+	saveEveryN  int
 
 	chunksSinceLastSave int // protected by mu
 }
 
-func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder, thumbDir string, logger *slog.Logger, onDone OnJobDone) *Pipeline {
+// NewPipeline builds a Pipeline with the given runtime config. Zero values in
+// cfg are filled from DefaultPipelineConfig so callers can supply partial
+// configs in tests.
+func NewPipeline(s *store.Store, idx *vectorstore.Index, emb embedder.Embedder, thumbDir string, logger *slog.Logger, onDone OnJobDone, cfg PipelineConfig) *Pipeline {
 	ctx, cancel := context.WithCancel(context.Background())
 	log := logger.WithGroup("indexer")
-	workerCount := 4
-	log.Info("pipeline created", "thumbDir", thumbDir, "workers", workerCount)
+	def := DefaultPipelineConfig()
+	if cfg.Workers <= 0 {
+		cfg.Workers = def.Workers
+	}
+	if cfg.JobQueueSize <= 0 {
+		cfg.JobQueueSize = def.JobQueueSize
+	}
+	if cfg.SaveEveryN <= 0 {
+		cfg.SaveEveryN = def.SaveEveryN
+	}
+	log.Info("pipeline created", "thumbDir", thumbDir, "workers", cfg.Workers, "queueSize", cfg.JobQueueSize, "saveEveryN", cfg.SaveEveryN)
 	p := &Pipeline{
 		store:       s,
 		index:       idx,
@@ -102,11 +122,12 @@ func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder,
 		pauseCh:     make(chan struct{}, 1),
 		ctx:         ctx,
 		cancel:      cancel,
-		jobCh:       make(chan indexJob, 64),
+		jobCh:       make(chan indexJob, cfg.JobQueueSize),
 		onJobDone:   onDone,
-		workerCount: workerCount,
+		workerCount: cfg.Workers,
+		saveEveryN:  cfg.SaveEveryN,
 	}
-	for i := 0; i < workerCount; i++ {
+	for i := 0; i < cfg.Workers; i++ {
 		p.workerWg.Add(1)
 		go p.worker()
 	}
@@ -115,27 +136,20 @@ func NewPipeline(s *store.Store, idx *vectorstore.Index, emb *embedder.Embedder,
 
 // SetEmbedder atomically replaces the pipeline's embedder.
 // Safe to call while the worker goroutine is running.
-func (p *Pipeline) SetEmbedder(e *embedder.Embedder) {
+func (p *Pipeline) SetEmbedder(e embedder.Embedder) {
 	p.embedderMu.Lock()
 	p.embedder = e
 	p.embedderMu.Unlock()
 }
 
-// getEmbedder returns the active embedder interface. In tests, mockEmb takes priority.
-// Returns nil if no embedder is configured.
-func (p *Pipeline) getEmbedder() embIface {
-	if p.mockEmb != nil {
-		return p.mockEmb
-	}
+// getEmbedder returns the active embedder. Returns nil if not configured.
+func (p *Pipeline) getEmbedder() embedder.Embedder {
 	p.embedderMu.RLock()
-	e := p.embedder
-	p.embedderMu.RUnlock()
-	if e == nil {
-		return nil
-	}
-	return e
+	defer p.embedderMu.RUnlock()
+	return p.embedder
 }
 
+// Status returns a snapshot of the current indexing progress.
 func (p *Pipeline) Status() IndexStatus {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -164,6 +178,7 @@ func (p *Pipeline) ResetStatus() {
 	p.mu.Unlock()
 }
 
+// Pause halts worker processing of new jobs until Resume is called.
 func (p *Pipeline) Pause() {
 	p.logger.Info("pipeline paused")
 	p.mu.Lock()
@@ -171,6 +186,7 @@ func (p *Pipeline) Pause() {
 	p.mu.Unlock()
 }
 
+// Resume wakes the pipeline from a paused state so workers can process new jobs.
 func (p *Pipeline) Resume() {
 	p.logger.Info("pipeline resumed")
 	p.mu.Lock()
@@ -182,12 +198,14 @@ func (p *Pipeline) Resume() {
 	}
 }
 
+// Stop cancels the pipeline context and waits for workers to exit.
 func (p *Pipeline) Stop() {
 	p.logger.Info("pipeline stopping")
 	p.cancel()
 	p.workerWg.Wait()
 }
 
+// SubmitFolder queues a folder-walking job onto the pipeline.
 func (p *Pipeline) SubmitFolder(folderPath string, excludePatterns []string, force bool) {
 	p.pendingJobs.Add(1)
 	select {
@@ -197,6 +215,7 @@ func (p *Pipeline) SubmitFolder(folderPath string, excludePatterns []string, for
 	}
 }
 
+// SubmitFile queues a single-file indexing job onto the pipeline.
 func (p *Pipeline) SubmitFile(filePath string) {
 	p.pendingJobs.Add(1)
 	select {
@@ -315,6 +334,7 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string, fo
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
+fileLoop:
 	for _, filePath := range files {
 		if p.generation.Load() != gen {
 			p.logger.Info("reindex generation changed, cancelling folder run", "folder", folderPath)
@@ -322,7 +342,7 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string, fo
 		}
 		select {
 		case <-p.ctx.Done():
-			break
+			break fileLoop
 		default:
 		}
 
@@ -339,7 +359,7 @@ func (p *Pipeline) processFolder(folderPath string, excludePatterns []string, fo
 			p.status.CurrentFile = fp
 			p.mu.Unlock()
 
-			if err := p.indexFile(fp, force); err != nil {
+			if err := p.indexFile(p.ctx, fp, force); err != nil {
 				if errors.Is(err, errStaleGeneration) {
 					// Discarded due to generation change — neither success nor failure.
 					return
@@ -386,7 +406,7 @@ func (p *Pipeline) processSingleFile(filePath string) {
 	p.status.CurrentFile = filePath
 	p.mu.Unlock()
 
-	if err := p.indexFile(filePath, false); err != nil {
+	if err := p.indexFile(p.ctx, filePath, false); err != nil {
 		if errors.Is(err, errStaleGeneration) {
 			return
 		}
@@ -401,26 +421,18 @@ func (p *Pipeline) processSingleFile(filePath string) {
 	}
 }
 
-func (p *Pipeline) indexFile(filePath string, force bool) error {
-	info, err := os.Stat(filePath)
+func (p *Pipeline) indexFile(ctx context.Context, filePath string, force bool) error {
+	gen := p.generation.Load()
+
+	stale, info, hash, err := p.checkStale(filePath, force)
 	if err != nil {
 		return err
 	}
-
-	hash, err := hashFile(filePath)
-	if err != nil {
-		return err
+	if !stale {
+		return nil
 	}
 
-	if !force {
-		existing, err := p.store.GetFileByPath(filePath)
-		if err == nil && existing.ContentHash == hash {
-			p.logger.Debug("skipping unchanged file", "path", filePath)
-			return nil
-		}
-	}
-
-	chunks, fileType, err := chunker.ChunkFile(filePath)
+	chunks, fileType, err := p.chunk(filePath)
 	if err != nil {
 		return err
 	}
@@ -428,17 +440,78 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 		return nil
 	}
 
-	ext := strings.ToLower(filepath.Ext(filePath))
-	p.logger.Debug("indexing file", "path", filePath, "type", string(fileType), "size", info.Size(), "chunks", len(chunks))
+	thumbPath := p.generateThumbnail(filePath, info, fileType)
 
-	thumbPath, thumbErr := GenerateThumbnail(filePath, p.thumbDir, string(fileType))
-	if thumbErr != nil {
-		p.logger.Warn("thumbnail generation failed", "path", filePath, "error", thumbErr)
+	fileID, err := p.upsertPending(filePath, info, fileType, thumbPath)
+	if err != nil {
+		return err
 	}
 
-	// Phase 1: register file with empty hash — not yet fully indexed.
+	vectors, batchChunks, err := p.embedBatched(ctx, filePath, fileID, chunks, hash)
+	if err != nil {
+		return err
+	}
+	if vectors == nil && batchChunks == nil {
+		// All chunks were empty; hash already committed inside embedBatched.
+		return nil
+	}
+
+	if p.generation.Load() != gen {
+		p.logger.Info("generation changed mid-batch, discarding results", "path", filePath)
+		return errStaleGeneration
+	}
+
+	if err := p.storeChunks(fileID, batchChunks, vectors); err != nil {
+		return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
+	}
+
+	return p.commit(fileID, hash)
+}
+
+// checkStale decides whether filePath needs (re-)indexing. It returns the stat
+// info and the freshly computed content hash so later phases can reuse them
+// without a second stat/open.
+func (p *Pipeline) checkStale(path string, force bool) (bool, fs.FileInfo, string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, nil, "", err
+	}
+	hash, err := hashFile(path)
+	if err != nil {
+		return false, nil, "", err
+	}
+	if !force {
+		existing, err := p.store.GetFileByPath(path)
+		if err == nil && existing.ContentHash == hash {
+			p.logger.Debug("skipping unchanged file", "path", path)
+			return false, info, hash, nil
+		}
+	}
+	return true, info, hash, nil
+}
+
+// chunk runs the chunker registry on path and returns the chunks plus detected
+// file type (needed for thumbnailing and the file row).
+func (p *Pipeline) chunk(path string) ([]chunker.Chunk, chunker.FileType, error) {
+	return chunker.ChunkFile(path)
+}
+
+// generateThumbnail writes a thumbnail if supported; errors are logged only.
+func (p *Pipeline) generateThumbnail(path string, info fs.FileInfo, fileType chunker.FileType) string {
+	p.logger.Debug("indexing file", "path", path, "type", string(fileType), "size", info.Size())
+	thumbPath, err := GenerateThumbnail(path, p.thumbDir, string(fileType))
+	if err != nil {
+		p.logger.Warn("thumbnail generation failed", "path", path, "error", err)
+	}
+	return thumbPath
+}
+
+// upsertPending writes the file row with an empty content_hash (Phase 1 of the
+// two-phase commit) and clears any stale vectors/chunks from a prior run.
+func (p *Pipeline) upsertPending(path string, info fs.FileInfo, fileType chunker.FileType, thumbPath string) (int64, error) {
+	ext := strings.ToLower(filepath.Ext(path))
 	fileID, err := p.store.UpsertFile(store.FileRecord{
-		Path:          filePath,
+		Path:          path,
 		FileType:      string(fileType),
 		Extension:     ext,
 		SizeBytes:     info.Size(),
@@ -448,69 +521,52 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 		ThumbnailPath: thumbPath,
 	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-
-	// Delete old vectors/chunks before re-embedding.
 	oldVecIDs, _ := p.store.GetVectorIDsByFileID(fileID)
 	for _, vid := range oldVecIDs {
 		p.index.Delete(vid)
 	}
 	p.store.DeleteChunksByFileID(fileID)
+	return fileID, nil
+}
 
+// embedBatched filters empty chunks, calls the embedder once, and returns the
+// vectors aligned with the surviving chunks. If every chunk was empty, it
+// commits the hash in place (so we don't re-scan the file forever) and returns
+// nil slices to signal the coordinator to stop. Quota errors are translated
+// into QuotaPaused/QuotaResumeAt status fields.
+func (p *Pipeline) embedBatched(ctx context.Context, path string, fileID int64, chunks []chunker.Chunk, hash string) ([][]float32, []chunker.Chunk, error) {
 	emb := p.getEmbedder()
 	if emb == nil {
-		return fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
+		return nil, nil, fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
 	}
 
-	// Phase 2: build batch inputs from non-empty chunks. Empty chunks are
-	// skipped entirely (no placeholder embedding) to avoid wasting quota; we
-	// track the corresponding chunker.Chunk in batchChunks so vecs[i] aligns
-	// with batchChunks[i] in Phase 3.
-	fileName := filepath.Base(filePath)
+	fileName := filepath.Base(path)
 	batchInputs := make([]embedder.ChunkInput, 0, len(chunks))
 	batchChunks := make([]chunker.Chunk, 0, len(chunks))
 	for _, chunk := range chunks {
 		switch {
 		case chunk.Text != "":
-			batchInputs = append(batchInputs, embedder.ChunkInput{
-				Title: fileName,
-				Text:  chunk.Text,
-			})
+			batchInputs = append(batchInputs, embedder.ChunkInput{Title: fileName, Text: chunk.Text})
 			batchChunks = append(batchChunks, chunk)
 		case len(chunk.Content) > 0:
-			batchInputs = append(batchInputs, embedder.ChunkInput{
-				Title:    fileName,
-				MIMEType: chunk.MimeType,
-				Data:     chunk.Content,
-			})
+			batchInputs = append(batchInputs, embedder.ChunkInput{Title: fileName, MIMEType: chunk.MimeType, Data: chunk.Content})
 			batchChunks = append(batchChunks, chunk)
 		}
 	}
-
 	if len(batchInputs) == 0 {
-		// Every chunk was empty — commit the hash so we don't re-scan forever.
-		p.logger.Debug("file has only empty chunks, committing hash without embedding", "path", filePath, "chunks", len(chunks))
+		p.logger.Debug("file has only empty chunks, committing hash without embedding", "path", path, "chunks", len(chunks))
 		if err := p.store.UpdateContentHash(fileID, hash); err != nil {
-			p.logger.Error("failed to update content hash", "path", filePath, "error", err)
-			return err
+			p.logger.Error("failed to update content hash", "path", path, "error", err)
+			return nil, nil, err
 		}
-		return nil
+		return nil, nil, nil
 	}
 
-	// Capture generation before embedding so we can detect stale runs.
-	gen := p.generation.Load()
-
-	vecs, embedErr := emb.EmbedBatch(p.ctx, batchInputs)
-
-	// If generation advanced while we were embedding, discard results (stale run).
-	if p.generation.Load() != gen {
-		p.logger.Info("generation changed mid-batch, discarding results", "path", filePath)
-		return errStaleGeneration
-	}
-
-	if embedErr != nil {
-		if isQuotaExhaustedError(embedErr) {
+	vecs, err := emb.EmbedBatch(ctx, batchInputs)
+	if err != nil {
+		if isQuotaExhaustedError(err) {
 			resumeAt := p.quotaResumeTime()
 			p.mu.Lock()
 			p.status.QuotaPaused = true
@@ -518,39 +574,47 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 			p.mu.Unlock()
 			p.logger.Warn("quota exhausted, pipeline paused", "resumeAt", resumeAt)
 		}
-		p.logger.Warn("batch embedding failed", "path", filePath, "error", embedErr)
-		return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
+		p.logger.Warn("batch embedding failed", "path", path, "error", err)
+		return nil, nil, fmt.Errorf("one or more chunks failed to embed for %s", path)
 	}
-
-	// Phase 3: write vectors and chunks to store in chunk.Index order.
-	// Guard against the API returning fewer embeddings than requested.
 	if len(vecs) != len(batchChunks) {
-		p.logger.Warn("embedding count mismatch", "path", filePath, "chunks", len(batchChunks), "vecs", len(vecs))
-		return fmt.Errorf("embedding count mismatch for %s: got %d vecs for %d chunks", filePath, len(vecs), len(batchChunks))
+		p.logger.Warn("embedding count mismatch", "path", path, "chunks", len(batchChunks), "vecs", len(vecs))
+		return nil, nil, fmt.Errorf("embedding count mismatch for %s: got %d vecs for %d chunks", path, len(vecs), len(batchChunks))
 	}
-	allSucceeded := true
-	for i, vec := range vecs {
-		chunk := batchChunks[i]
-		vecID := fmt.Sprintf("f%d-c%d", fileID, chunk.Index)
-		if addErr := p.index.Add(vecID, vec); addErr != nil {
-			p.logger.Warn("adding vector failed", "path", filePath, "chunk", chunk.Index, "error", addErr)
-			allSucceeded = false
-			continue
-		}
+	return vecs, batchChunks, nil
+}
 
+// storeChunks writes vectors to HNSW and chunk rows to SQLite, triggering the
+// periodic HNSW save every saveEveryN inserted chunks.
+func (p *Pipeline) storeChunks(fileID int64, chunks []chunker.Chunk, vectors [][]float32) error {
+	emb := p.getEmbedder()
+	var modelID string
+	var dims int
+	if emb != nil {
+		modelID = emb.ModelID()
+		dims = emb.Dimensions()
+	}
+	for i, vec := range vectors {
+		chunk := chunks[i]
+		vecID := fmt.Sprintf("f%d-c%d", fileID, chunk.Index)
+		if err := p.index.Add(vecID, vec); err != nil {
+			p.logger.Warn("adding vector failed", "fileID", fileID, "chunk", chunk.Index, "error", err)
+			return err
+		}
 		p.store.InsertChunk(store.ChunkRecord{
-			FileID:     fileID,
-			VectorID:   vecID,
-			StartTime:  chunk.StartTime,
-			EndTime:    chunk.EndTime,
-			ChunkIndex: chunk.Index,
-			VectorBlob: store.VecToBlob(vec),
+			FileID:         fileID,
+			VectorID:       vecID,
+			StartTime:      chunk.StartTime,
+			EndTime:        chunk.EndTime,
+			ChunkIndex:     chunk.Index,
+			VectorBlob:     store.VecToBlob(vec),
+			EmbeddingModel: modelID,
+			EmbeddingDims:  dims,
 		})
 
-		// Periodic HNSW save every saveInterval chunks.
 		p.mu.Lock()
 		p.chunksSinceLastSave++
-		shouldSave := p.chunksSinceLastSave >= saveInterval
+		shouldSave := p.chunksSinceLastSave >= p.saveEveryN
 		if shouldSave {
 			p.chunksSinceLastSave = 0
 		}
@@ -559,18 +623,17 @@ func (p *Pipeline) indexFile(filePath string, force bool) error {
 			p.onJobDone()
 		}
 	}
+	return nil
+}
 
-	// Phase 4: commit content_hash only if all chunks stored successfully.
-	if allSucceeded {
-		if err := p.store.UpdateContentHash(fileID, hash); err != nil {
-			p.logger.Error("failed to update content hash", "path", filePath, "error", err)
-			return err
-		}
-		return nil
+// commit writes the final content_hash (Phase 2 of the two-phase commit). Once
+// this succeeds the file is considered fully indexed.
+func (p *Pipeline) commit(fileID int64, hash string) error {
+	if err := p.store.UpdateContentHash(fileID, hash); err != nil {
+		p.logger.Error("failed to update content hash", "fileID", fileID, "error", err)
+		return err
 	}
-
-	p.logger.Warn("some chunks failed — content_hash not committed, file will be re-indexed on next startup", "path", filePath)
-	return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
+	return nil
 }
 
 // quotaResumeTime returns the time when the quota pause is expected to expire.
@@ -580,8 +643,8 @@ func (p *Pipeline) quotaResumeTime() time.Time {
 	p.embedderMu.RLock()
 	emb := p.embedder
 	p.embedderMu.RUnlock()
-	if emb != nil {
-		if t := emb.Limiter().PausedUntil(); !t.IsZero() {
+	if g, ok := emb.(interface{ Limiter() *embedder.RateLimiter }); ok {
+		if t := g.Limiter().PausedUntil(); !t.IsZero() {
 			return t
 		}
 	}
@@ -595,24 +658,6 @@ func isQuotaExhaustedError(err error) bool {
 	s := err.Error()
 	return strings.Contains(s, "keys exhausted") ||
 		strings.Contains(s, "keys are cooling or exhausted")
-}
-
-func (p *Pipeline) waitForQuotaRecovery() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-p.ctx.Done():
-			return
-		case <-ticker.C:
-			p.mu.Lock()
-			p.status.QuotaPaused = false
-			p.status.QuotaResumeAt = ""
-			p.mu.Unlock()
-			p.logger.Info("quota recovery check, resuming indexing")
-			return
-		}
-	}
 }
 
 func hashFile(path string) (string, error) {

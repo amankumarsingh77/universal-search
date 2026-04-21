@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"universal-search/internal/apperr"
 	"universal-search/internal/query"
 	"universal-search/internal/store"
 	"universal-search/internal/vectorstore"
@@ -21,21 +22,83 @@ type SearchWithSpecResult struct {
 // Engine performs semantic search by combining vector similarity search
 // with SQLite metadata lookups.
 type Engine struct {
-	store   *store.Store
-	index   *vectorstore.Index
-	logger  *slog.Logger
-	planner *Planner
+	store    *store.Store
+	index    *vectorstore.Index
+	logger   *slog.Logger
+	planner  *Planner
+	reranker *Reranker
+	ladder   *Ladder
+	merger   *Merger
+	modelID  string // current embedder model; empty disables the gate
+}
+
+// EngineConfig bundles tunables for the search engine and its collaborators.
+type EngineConfig struct {
+	Planner  PlannerConfig
+	Reranker RerankerConfig
+	Ladder   LadderConfig
+	Merger   MergerConfig
+}
+
+// DefaultEngineConfig returns the historical defaults for all search knobs.
+func DefaultEngineConfig() EngineConfig {
+	return EngineConfig{
+		Planner:  DefaultPlannerConfig(),
+		Reranker: DefaultRerankerConfig(),
+		Ladder:   DefaultLadderConfig(),
+		Merger:   DefaultMergerConfig(),
+	}
 }
 
 // New creates a new search engine backed by the given store and vector index.
-func New(s *store.Store, idx *vectorstore.Index, logger *slog.Logger) *Engine {
-	planner := NewPlannerWithLogger(s, idx, DefaultBruteForceThreshold, logger.WithGroup("planner"))
-	return &Engine{store: s, index: idx, logger: logger.WithGroup("search"), planner: planner}
+func New(s *store.Store, idx *vectorstore.Index, logger *slog.Logger, cfg EngineConfig) *Engine {
+	planner := NewPlannerWithLogger(s, idx, cfg.Planner, logger.WithGroup("planner"))
+	return &Engine{
+		store:    s,
+		index:    idx,
+		logger:   logger.WithGroup("search"),
+		planner:  planner,
+		reranker: NewReranker(cfg.Reranker),
+		ladder:   NewLadder(cfg.Ladder),
+		merger:   NewMerger(cfg.Merger),
+	}
+}
+
+// NewWithConfig creates a new Engine with an explicit Planner plus explicit
+// reranker/ladder/merger configs. Used by app.startup to wire Config-derived
+// values through all collaborators.
+func NewWithConfig(s *store.Store, idx *vectorstore.Index, logger *slog.Logger, p *Planner, cfg EngineConfig) *Engine {
+	return &Engine{
+		store:    s,
+		index:    idx,
+		logger:   logger.WithGroup("search"),
+		planner:  p,
+		reranker: NewReranker(cfg.Reranker),
+		ladder:   NewLadder(cfg.Ladder),
+		merger:   NewMerger(cfg.Merger),
+	}
+}
+
+// NewWithModel creates an Engine that gates results by the given embedding
+// model id. Chunks whose embedding_model does not match modelID are dropped
+// from search results. An empty modelID disables the gate.
+func NewWithModel(s *store.Store, idx *vectorstore.Index, logger *slog.Logger, p *Planner, cfg EngineConfig, modelID string) *Engine {
+	e := NewWithConfig(s, idx, logger, p, cfg)
+	e.modelID = modelID
+	return e
 }
 
 // NewWithPlanner creates a new Engine with an explicit Planner (used in tests).
 func NewWithPlanner(s *store.Store, idx *vectorstore.Index, logger *slog.Logger, p *Planner) *Engine {
-	return &Engine{store: s, index: idx, logger: logger.WithGroup("search"), planner: p}
+	return &Engine{
+		store:    s,
+		index:    idx,
+		logger:   logger.WithGroup("search"),
+		planner:  p,
+		reranker: NewReranker(DefaultRerankerConfig()),
+		ladder:   NewLadder(DefaultLadderConfig()),
+		merger:   NewMerger(DefaultMergerConfig()),
+	}
 }
 
 // SearchByVector searches the HNSW index for the nearest neighbors to
@@ -135,21 +198,39 @@ func (e *Engine) SearchWithSpec(queryVec []float32, spec query.FilterSpec, rawQu
 		return SearchWithSpecResult{Strategy: strategy, PlannerCount: plannerCount}, err
 	}
 
+	// Model gate: drop chunks whose embedding_model != engine.modelID. If the
+	// gate strips every candidate and there was at least one before filtering,
+	// signal ErrModelMismatch so the UI can prompt for reindex.
+	if e.modelID != "" {
+		preCount := len(results)
+		filtered := results[:0]
+		for _, r := range results {
+			if r.EmbeddingModel == "" || r.EmbeddingModel == e.modelID {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+		if preCount > 0 && len(results) == 0 {
+			e.logger.Warn("search: all candidates filtered by model gate", "engine_model", e.modelID)
+			return SearchWithSpecResult{Strategy: strategy, PlannerCount: plannerCount}, apperr.ErrModelMismatch
+		}
+	}
+
 	// 2. If zero results and has filters, try relaxation.
 	var droppedDesc string
 	if len(results) == 0 && len(spec.Must) > 0 {
-		results, droppedDesc, err = RelaxationLadder(context.Background(), e.planner, queryVec, spec, k)
+		results, droppedDesc, err = e.ladder.RelaxationLadder(context.Background(), e.planner, queryVec, spec, k)
 		if err != nil {
 			return SearchWithSpecResult{Strategy: strategy, PlannerCount: plannerCount}, err
 		}
 	}
 
 	// 3. Rerank.
-	results = Rerank(results, spec)
+	results = e.reranker.Rerank(results, spec)
 
 	// 4. Run filename match and merge.
 	filenameResults := FilenameMatch(context.Background(), e.store, rawQuery)
-	results = MergeWithFilenameResults(results, filenameResults, rawQuery, k)
+	results = e.merger.MergeWithFilenameResults(results, filenameResults, rawQuery, k)
 
 	e.logger.Info("SearchWithSpec completed",
 		"strategy", strategy,

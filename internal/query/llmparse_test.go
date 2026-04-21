@@ -142,10 +142,11 @@ func TestDecodeToolCallResponse_ValidFunctionCall(t *testing.T) {
 // buildFakeParser constructs an LLMParser with generate injected for testing.
 func buildFakeParser(generate generateContentFn) *LLMParser {
 	p := &LLMParser{
-		limiter:  alwaysAllowLimiter{},
-		model:    llmModelName,
-		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		generate: generate,
+		limiter:    alwaysAllowLimiter{},
+		model:      DefaultLLMConfig().Model,
+		maxRetries: DefaultLLMConfig().MaxRetries,
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		generate:   generate,
 	}
 	return p
 }

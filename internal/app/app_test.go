@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"log/slog"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"universal-search/internal/config"
 	"universal-search/internal/indexer"
 	"universal-search/internal/query"
 	"universal-search/internal/search"
@@ -23,7 +24,7 @@ func newTestApp(t *testing.T) *App {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	return &App{store: s, logger: slog.Default()}
+	return &App{cfg: config.DefaultConfig(), store: s, logger: slog.Default()}
 }
 
 func TestSeedDefaultIgnorePatterns_SeedsOnEmptyDB(t *testing.T) {
@@ -215,8 +216,8 @@ func TestSearchResultDTO_HasScoreField(t *testing.T) {
 // enqueues work; actual file processing would fail but is not exercised here.
 func newTestPipeline(t *testing.T, s *store.Store) *indexer.Pipeline {
 	t.Helper()
-	idx := vectorstore.NewIndex(slog.Default())
-	p := indexer.NewPipeline(s, idx, nil, t.TempDir(), slog.Default(), nil)
+	idx := vectorstore.NewDefaultIndex(slog.Default())
+	p := indexer.NewPipeline(s, idx, nil, t.TempDir(), slog.Default(), nil, indexer.DefaultPipelineConfig())
 	t.Cleanup(func() { p.Stop() })
 	return p
 }
@@ -341,8 +342,9 @@ func newTestAppWithCache(t *testing.T) *App {
 	}
 	t.Cleanup(func() { s.Close() })
 	a := &App{
-		store:           s,
-		logger:          slog.Default(),
+		cfg:              config.DefaultConfig(),
+		store:            s,
+		logger:           slog.Default(),
 		parsedQueryCache: query.NewParsedQueryCache(s),
 	}
 	return a

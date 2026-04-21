@@ -20,6 +20,7 @@ export function useSearch() {
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(false);
+  const [errorCode, setErrorCode] = useState<string>('');
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const preEmbedRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -92,13 +93,21 @@ export function useSearch() {
 
       // Always update the banner — clear it when absent so stale banners don't persist.
       dispatch({ type: 'BANNER_SET', payload: withFilters?.relaxationBanner ?? '' });
+      setErrorCode(withFilters?.errorCode ?? '');
       lastSemanticQueryRef.current = semanticQuery;
       unfilteredResultsRef.current = res;
       setResults(res);
       setSelectedIndex(0);
     } catch (err) {
       if (seq !== searchSeqRef.current) return;
-      setError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      // Backends that surface apperr codes through Wails errors include the
+      // code string inside the error message — match it so the banner fires
+      // whichever path the backend takes.
+      if (msg.includes('ERR_MODEL_MISMATCH')) {
+        setErrorCode('ERR_MODEL_MISMATCH');
+      }
       setResults([]);
       unfilteredResultsRef.current = [];
     } finally {
@@ -212,5 +221,6 @@ export function useSearch() {
     removeChip,
     forceParseQuery,
     isOffline,
+    errorCode,
   };
 }

@@ -492,10 +492,7 @@ func parseExt(value string) ([]Clause, string, bool) {
 			continue
 		}
 		// Strip leading dot for typo correction lookup.
-		bare := p
-		if strings.HasPrefix(bare, ".") {
-			bare = bare[1:]
-		}
+		bare := strings.TrimPrefix(p, ".")
 		// Typo correction: try to find closest known extension.
 		if corrected, ok := CorrectExtension(bare); ok {
 			exts = append(exts, "."+corrected)

@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// FileType names the coarse content category of an indexed file.
 type FileType string
 
 const (
@@ -50,9 +51,34 @@ var audioExtensions = map[string]string{
 	".flac": "audio/flac",
 }
 
-// transcodeHEIC converts a HEIC/HEIF file to JPEG bytes using ffmpeg.
-// It is a package-level var so tests can stub it without spawning a real process.
-var transcodeHEIC = transcodeHEICToJPEG
+// heicTranscoder converts a HEIC/HEIF file to JPEG bytes. The default
+// implementation shells out to ffmpeg; tests inject a fake at the Registry
+// boundary instead of mutating a package-level var.
+type heicTranscoder func(filePath string) ([]byte, error)
+
+// Registry holds chunker dependencies that benefit from injection (e.g. the
+// HEIC transcoder, which normally shells out to ffmpeg).
+type Registry struct {
+	transcodeHEIC heicTranscoder
+}
+
+// NewRegistry constructs a Registry with the default ffmpeg-backed HEIC
+// transcoder.
+func NewRegistry() *Registry {
+	return &Registry{transcodeHEIC: transcodeHEICToJPEG}
+}
+
+// WithHEICTranscoder returns a copy of r with the given HEIC transcoder
+// function. Used in tests to avoid spawning ffmpeg.
+func (r *Registry) WithHEICTranscoder(fn heicTranscoder) *Registry {
+	cp := *r
+	cp.transcodeHEIC = fn
+	return &cp
+}
+
+// defaultRegistry is used by the package-level ChunkFile helper. Tests that
+// need custom behavior should construct their own Registry.
+var defaultRegistry = NewRegistry()
 
 // transcodeHEICToJPEG uses ffmpeg to decode a HEIC/HEIF image and return JPEG
 // bytes via stdout. ffmpeg is already a project dependency (used for video
@@ -74,6 +100,7 @@ func transcodeHEICToJPEG(filePath string) ([]byte, error) {
 	return out, nil
 }
 
+// Classify returns the FileType for a given file path based on its extension.
 func Classify(filePath string) FileType {
 	ext := strings.ToLower(filepath.Ext(filePath))
 
@@ -98,6 +125,7 @@ func Classify(filePath string) FileType {
 	return TypeUnknown
 }
 
+// MimeType returns the content MIME type inferred from a file's extension.
 func MimeType(filePath string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
 
@@ -116,7 +144,14 @@ func MimeType(filePath string) string {
 	return ""
 }
 
+// ChunkFile dispatches to the appropriate chunker using the default registry.
 func ChunkFile(filePath string) ([]Chunk, FileType, error) {
+	return defaultRegistry.ChunkFile(filePath)
+}
+
+// ChunkFile dispatches to the appropriate chunker for the given file using
+// this registry's configured dependencies.
+func (r *Registry) ChunkFile(filePath string) ([]Chunk, FileType, error) {
 	ft := Classify(filePath)
 
 	switch ft {
@@ -134,7 +169,7 @@ func ChunkFile(filePath string) ([]Chunk, FileType, error) {
 				return nil, ft, fmt.Errorf("file too large (%d bytes, max %d): %s", info.Size(), maxBinarySize, filePath)
 			}
 
-			data, err := transcodeHEIC(filePath)
+			data, err := r.transcodeHEIC(filePath)
 			if err != nil {
 				return nil, ft, err
 			}

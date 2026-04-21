@@ -9,6 +9,7 @@ import (
 // into memory. Files larger than this are skipped to prevent OOM.
 const maxBinarySize = 50 * 1024 * 1024
 
+// ChunkBinary reads a binary file into a single Chunk, rejecting files above the size cap.
 func ChunkBinary(filePath, mimeType string) ([]Chunk, error) {
 	info, err := os.Stat(filePath)
 	if err != nil {

@@ -29,6 +29,14 @@ type mockEmbedder struct {
 	blockCh chan struct{}
 }
 
+func (m *mockEmbedder) ModelID() string { return "mock" }
+
+func (m *mockEmbedder) Dimensions() int { return 3 }
+
+func (m *mockEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
+	return []float32{0, 0, 0}, nil
+}
+
 func (m *mockEmbedder) EmbedBatch(ctx context.Context, chunks []embedder.ChunkInput) ([][]float32, error) {
 	m.mu.Lock()
 	m.batchCallCount++
@@ -69,17 +77,18 @@ func newTestPipeline(t *testing.T, onDone func()) (*Pipeline, *store.Store, *vec
 	}
 	t.Cleanup(func() { s.Close() })
 
-	idx := vectorstore.NewIndex(testLogger())
+	idx := vectorstore.NewDefaultIndex(testLogger())
 
 	p := &Pipeline{
-		store:     s,
-		index:     idx,
-		embedder:  nil, // no real embedder
-		thumbDir:  t.TempDir(),
-		logger:    testLogger().WithGroup("indexer"),
-		pauseCh:   make(chan struct{}, 1),
-		jobCh:     make(chan indexJob, 64),
-		onJobDone: onDone,
+		store:      s,
+		index:      idx,
+		embedder:   nil, // no real embedder
+		thumbDir:   t.TempDir(),
+		logger:     testLogger().WithGroup("indexer"),
+		pauseCh:    make(chan struct{}, 1),
+		jobCh:      make(chan indexJob, 64),
+		onJobDone:  onDone,
+		saveEveryN: DefaultPipelineConfig().SaveEveryN,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p.ctx = ctx
@@ -122,7 +131,7 @@ func TestIndexFile_SkipsUnchangedFile(t *testing.T) {
 	}
 
 	// indexFile should skip (return nil) since hash matches.
-	if err := p.indexFile(filePath, false); err != nil {
+	if err := p.indexFile(p.ctx, filePath, false); err != nil {
 		t.Fatalf("expected nil (skip), got: %v", err)
 	}
 }
@@ -155,7 +164,7 @@ func TestIndexFile_ReindexesFileWithEmptyHash(t *testing.T) {
 	}
 
 	// Should NOT skip. With nil embedder it should fail with "embedder not initialized".
-	err = p.indexFile(filePath, false)
+	err = p.indexFile(p.ctx, filePath, false)
 	if err == nil {
 		t.Fatal("expected an error (embedder not initialized), got nil")
 	}
@@ -273,7 +282,7 @@ func TestIndexFile_DoesNotUpdateHashIfChunkFails(t *testing.T) {
 
 	// Start with no record in the store — indexFile will call UpsertFile with empty hash.
 	// Then it will fail at embedding (nil embedder) and must NOT call UpdateContentHash.
-	err := p.indexFile(filePath, false)
+	err := p.indexFile(p.ctx, filePath, false)
 	if err == nil {
 		t.Fatal("expected error from nil embedder")
 	}
@@ -289,7 +298,7 @@ func TestIndexFile_DoesNotUpdateHashIfChunkFails(t *testing.T) {
 }
 
 // TestPipeline_ChunksSinceLastSave_FieldExists verifies the struct field
-// and saveInterval constant compile correctly and are zero-valued by default.
+// and p.saveEveryN constant compile correctly and are zero-valued by default.
 func TestPipeline_ChunksSinceLastSave_FieldExists(t *testing.T) {
 	p, _, _ := newTestPipeline(t, nil)
 	p.mu.Lock()
@@ -298,14 +307,14 @@ func TestPipeline_ChunksSinceLastSave_FieldExists(t *testing.T) {
 	if initial != 0 {
 		t.Fatalf("expected chunksSinceLastSave=0 on new pipeline, got %d", initial)
 	}
-	// saveInterval constant must equal 50.
-	if saveInterval != 50 {
-		t.Fatalf("expected saveInterval=50, got %d", saveInterval)
+	// p.saveEveryN constant must equal 50.
+	if p.saveEveryN != 50 {
+		t.Fatalf("expected p.saveEveryN=50, got %d", p.saveEveryN)
 	}
 }
 
 // TestPipeline_PeriodicSave_OnJobDoneCalledAtSaveInterval — REQ-008
-// Manually increment chunksSinceLastSave to saveInterval and verify onJobDone fires.
+// Manually increment chunksSinceLastSave to p.saveEveryN and verify onJobDone fires.
 func TestPipeline_PeriodicSave_OnJobDoneCalledAtSaveInterval(t *testing.T) {
 	calls := 0
 	onDone := func() { calls++ }
@@ -314,13 +323,13 @@ func TestPipeline_PeriodicSave_OnJobDoneCalledAtSaveInterval(t *testing.T) {
 
 	// Simulate the periodic-save logic inline (mirrors what indexFile does).
 	p.mu.Lock()
-	p.chunksSinceLastSave = saveInterval - 1
+	p.chunksSinceLastSave = p.saveEveryN - 1
 	p.mu.Unlock()
 
-	// One more chunk pushes it to saveInterval.
+	// One more chunk pushes it to p.saveEveryN.
 	p.mu.Lock()
 	p.chunksSinceLastSave++
-	shouldSave := p.chunksSinceLastSave >= saveInterval
+	shouldSave := p.chunksSinceLastSave >= p.saveEveryN
 	if shouldSave {
 		p.chunksSinceLastSave = 0
 	}
@@ -331,7 +340,7 @@ func TestPipeline_PeriodicSave_OnJobDoneCalledAtSaveInterval(t *testing.T) {
 	}
 
 	if calls != 1 {
-		t.Fatalf("expected onJobDone called 1 time at saveInterval, got %d", calls)
+		t.Fatalf("expected onJobDone called 1 time at p.saveEveryN, got %d", calls)
 	}
 
 	// Counter must have reset.
@@ -344,17 +353,17 @@ func TestPipeline_PeriodicSave_OnJobDoneCalledAtSaveInterval(t *testing.T) {
 }
 
 // TestPipeline_PeriodicSave_NotCalledBeforeSaveInterval — REQ-008
-// Verify onJobDone is NOT called when counter < saveInterval.
+// Verify onJobDone is NOT called when counter < p.saveEveryN.
 func TestPipeline_PeriodicSave_NotCalledBeforeSaveInterval(t *testing.T) {
 	calls := 0
 	onDone := func() { calls++ }
 	p, _, _ := newTestPipeline(t, onDone)
 
 	// Simulate 49 chunks (one short of threshold).
-	for i := 0; i < saveInterval-1; i++ {
+	for i := 0; i < p.saveEveryN-1; i++ {
 		p.mu.Lock()
 		p.chunksSinceLastSave++
-		shouldSave := p.chunksSinceLastSave >= saveInterval
+		shouldSave := p.chunksSinceLastSave >= p.saveEveryN
 		if shouldSave {
 			p.chunksSinceLastSave = 0
 		}
@@ -366,7 +375,7 @@ func TestPipeline_PeriodicSave_NotCalledBeforeSaveInterval(t *testing.T) {
 	}
 
 	if calls != 0 {
-		t.Fatalf("expected no onJobDone calls before saveInterval, got %d", calls)
+		t.Fatalf("expected no onJobDone calls before p.saveEveryN, got %d", calls)
 	}
 }
 
@@ -414,7 +423,7 @@ func TestSetEmbedder_NilEmbedder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := p.indexFile(filePath, false)
+	err := p.indexFile(p.ctx, filePath, false)
 	if err == nil {
 		t.Fatal("expected error from nil embedder, got nil")
 	}
@@ -487,12 +496,12 @@ func TestIndexFile_ForceBypassesHashCheck(t *testing.T) {
 	}
 
 	// force=false: should skip (return nil)
-	if err := p.indexFile(filePath, false); err != nil {
+	if err := p.indexFile(p.ctx, filePath, false); err != nil {
 		t.Fatalf("force=false: expected nil (skip), got: %v", err)
 	}
 
 	// force=true: should NOT skip → hits embedder nil → "embedder not initialized"
-	err = p.indexFile(filePath, true)
+	err = p.indexFile(p.ctx, filePath, true)
 	if err == nil {
 		t.Fatal("force=true: expected error (not skipped), got nil")
 	}
@@ -619,7 +628,7 @@ func TestSetEmbedder_Race(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
 		wg.Add(1)
-		go func(e *embedder.Embedder) {
+		go func(e embedder.Embedder) {
 			defer wg.Done()
 			p.SetEmbedder(e)
 		}(emb)
@@ -641,7 +650,7 @@ func newTestPipelineWithMock(t *testing.T, mock *mockEmbedder, onDone func(), wo
 	}
 	t.Cleanup(func() { s.Close() })
 
-	idx := vectorstore.NewIndex(testLogger())
+	idx := vectorstore.NewDefaultIndex(testLogger())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &Pipeline{
@@ -655,8 +664,9 @@ func newTestPipelineWithMock(t *testing.T, mock *mockEmbedder, onDone func(), wo
 		ctx:         ctx,
 		cancel:      cancel,
 		workerCount: workerCount,
+		saveEveryN:  DefaultPipelineConfig().SaveEveryN,
 	}
-	p.mockEmb = mock
+	p.embedder = mock
 	t.Cleanup(cancel)
 
 	for i := 0; i < workerCount; i++ {
@@ -725,7 +735,7 @@ func TestIndexFile_UsesBatchEmbedding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := p.indexFile(filePath, true)
+	err := p.indexFile(p.ctx, filePath, true)
 	if err != nil {
 		t.Fatalf("indexFile returned error: %v", err)
 	}
@@ -753,7 +763,7 @@ func TestIndexFile_ChunkOrderingPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := p.indexFile(filePath, true)
+	err := p.indexFile(p.ctx, filePath, true)
 	if err != nil {
 		t.Fatalf("indexFile returned error: %v", err)
 	}
@@ -806,7 +816,7 @@ func TestIndexFile_GenerationCancelMidBatch(t *testing.T) {
 	// Run indexFile in a goroutine; it will block inside EmbedBatch.
 	done := make(chan error, 1)
 	go func() {
-		done <- p.indexFile(filePath, true)
+		done <- p.indexFile(p.ctx, filePath, true)
 	}()
 
 	// Wait a moment for indexFile to reach EmbedBatch (it will be blocked).
@@ -961,7 +971,7 @@ func TestPipeline_IndexFile_QuotaError_SetsQuotaPaused(t *testing.T) {
 
 	// indexFile should detect the quota error and set QuotaPaused.
 	// It returns an error (the quota error).
-	_ = p.indexFile(filePath, true)
+	_ = p.indexFile(p.ctx, filePath, true)
 
 	s := p.Status()
 	if !s.QuotaPaused {
@@ -1025,7 +1035,7 @@ func TestPipeline_EmbedBatch_150Chunks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := p.indexFile(filePath, true)
+	err := p.indexFile(p.ctx, filePath, true)
 	if err != nil {
 		t.Fatalf("indexFile returned error: %v", err)
 	}
@@ -1084,7 +1094,7 @@ func TestIndexer_WritesVectorBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := p.indexFile(filePath, true); err != nil {
+	if err := p.indexFile(p.ctx, filePath, true); err != nil {
 		t.Fatalf("indexFile returned error: %v", err)
 	}
 
@@ -1125,7 +1135,7 @@ func TestIndexer_VectorBlobMatchesEmbedding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := p.indexFile(filePath, true); err != nil {
+	if err := p.indexFile(p.ctx, filePath, true); err != nil {
 		t.Fatalf("indexFile returned error: %v", err)
 	}
 

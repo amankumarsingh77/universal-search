@@ -28,6 +28,7 @@ var legacyOfficeExt = map[string]bool{
 	".rtf": true,
 }
 
+// HasLibreOffice reports whether the libreoffice binary is available on PATH.
 func HasLibreOffice() bool {
 	_, err := exec.LookPath("libreoffice")
 	return err == nil
@@ -38,6 +39,7 @@ func hasQPDF() bool {
 	return err == nil
 }
 
+// IsDocumentFile reports whether the extension is a supported document format.
 func IsDocumentFile(ext string) bool {
 	ext = strings.ToLower(ext)
 	if ext == ".pdf" || modernOfficeExt[ext] {
@@ -46,14 +48,17 @@ func IsDocumentFile(ext string) bool {
 	return legacyOfficeExt[ext]
 }
 
+// IsModernOffice reports whether the extension is an OOXML/ODF file (.docx, .pptx, .xlsx, …).
 func IsModernOffice(ext string) bool {
 	return modernOfficeExt[strings.ToLower(ext)]
 }
 
+// IsLegacyOffice reports whether the extension is a legacy office format (.doc, .ppt, .xls, …).
 func IsLegacyOffice(ext string) bool {
 	return legacyOfficeExt[strings.ToLower(ext)]
 }
 
+// ChunkDocument produces text chunks from a document file (PDF, office, RTF, ODF).
 func ChunkDocument(filePath string) ([]Chunk, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
 

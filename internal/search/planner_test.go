@@ -44,12 +44,12 @@ func TestPlanner_UnfilteredUsesHNSW(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	vec := makeVec(1.0, 768)
 	seedFileWithVec(t, db, idx, "/tmp/a.txt", "text", "vec-a", vec)
 
-	planner := NewPlanner(db, idx, DefaultBruteForceThreshold)
+	planner := NewPlanner(db, idx, DefaultPlannerConfig())
 	queryVec := makeVec(1.0, 768)
 	results, strategy, plannerCount, err := planner.Plan(queryVec, query.FilterSpec{}, 5)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestPlanner_BruteForceWhenCountBelowThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Seed 3 image files
 	for i, name := range []string{"img1.png", "img2.png", "img3.png"} {
@@ -88,7 +88,7 @@ func TestPlanner_BruteForceWhenCountBelowThreshold(t *testing.T) {
 		Must: []query.Clause{{Field: query.FieldFileType, Op: query.OpEq, Value: "image"}},
 	}
 
-	planner := NewPlanner(db, idx, 5000)
+	planner := NewPlanner(db, idx, PlannerConfig{BruteForceThreshold: 5000})
 	queryVec := makeVec(1.0, 768)
 	results, strategy, plannerCount, err := planner.Plan(queryVec, spec, 10)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestPlanner_HNSWPostFilterWhenCountAboveThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Seed 2 image files
 	for i, name := range []string{"img1.png", "img2.png"} {
@@ -130,7 +130,7 @@ func TestPlanner_HNSWPostFilterWhenCountAboveThreshold(t *testing.T) {
 	}
 
 	// threshold=1 so count(2) >= threshold → hnsw_post_filter
-	planner := NewPlanner(db, idx, 1)
+	planner := NewPlanner(db, idx, PlannerConfig{BruteForceThreshold: 1})
 	queryVec := makeVec(1.0, 768)
 	_, strategy, plannerCount, err := planner.Plan(queryVec, spec, 5)
 	if err != nil {
@@ -152,7 +152,7 @@ func TestPlanner_ReturnsEmptyWhenCountZero(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	seedFileWithVec(t, db, idx, "/tmp/a.txt", "text", "vec-a", makeVec(1.0, 768))
 
@@ -160,7 +160,7 @@ func TestPlanner_ReturnsEmptyWhenCountZero(t *testing.T) {
 		Must: []query.Clause{{Field: query.FieldFileType, Op: query.OpEq, Value: "video"}},
 	}
 
-	planner := NewPlanner(db, idx, 5000)
+	planner := NewPlanner(db, idx, PlannerConfig{BruteForceThreshold: 5000})
 	queryVec := makeVec(1.0, 768)
 	results, strategy, plannerCount, err := planner.Plan(queryVec, spec, 5)
 	if err != nil {
@@ -216,7 +216,7 @@ func TestEfCalculation(t *testing.T) {
 	k := 20
 	total := 100000
 	count := 5000
-	ef := clampEf(k, total, count)
+	ef := clampEf(k, total, count, 10)
 	expected := 500 // min(max(20*10*100000/5000, 64), 500) = min(4000, 500) = 500
 	if ef != expected {
 		t.Errorf("expected ef=%d, got %d", expected, ef)
@@ -230,7 +230,7 @@ func TestSearchWithSpec_FiltersResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Seed one image and one text file with similar vectors
 	imgVec := makeVec(1.0, 768)
@@ -239,7 +239,7 @@ func TestSearchWithSpec_FiltersResults(t *testing.T) {
 	seedFileWithVec(t, db, idx, "/tmp/readme.txt", "text", "vec-txt", txtVec)
 
 	// Use threshold=0 to force HNSW post-filter path, which joins full metadata.
-	planner := NewPlanner(db, idx, 0)
+	planner := NewPlanner(db, idx, PlannerConfig{})
 	engine := NewWithPlanner(db, idx, testLogger, planner)
 
 	spec := query.FilterSpec{

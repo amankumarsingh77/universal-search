@@ -119,15 +119,17 @@ export namespace main {
 	export class SearchWithFiltersResult {
 	    results: SearchResultDTO[];
 	    relaxationBanner?: string;
-	
+	    errorCode?: string;
+
 	    static createFrom(source: any = {}) {
 	        return new SearchWithFiltersResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.results = this.convertValues(source["results"], SearchResultDTO);
 	        this.relaxationBanner = source["relaxationBanner"];
+	        this.errorCode = source["errorCode"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

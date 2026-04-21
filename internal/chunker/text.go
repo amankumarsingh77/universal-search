@@ -13,6 +13,7 @@ const (
 	textChunkOverlap = 200
 )
 
+// IsTextFile reports whether the file appears to be valid UTF-8 text (no NUL bytes).
 func IsTextFile(path string) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -35,6 +36,7 @@ func IsTextFile(path string) (bool, error) {
 	return utf8.Valid(buf), nil
 }
 
+// ChunkText splits a text file's contents into overlapping chunks.
 func ChunkText(filePath string) ([]Chunk, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {

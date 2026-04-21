@@ -12,6 +12,7 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+// ExtractDocxText returns the plain text content of a .docx file.
 func ExtractDocxText(filePath string) (string, error) {
 	r, err := zip.OpenReader(filePath)
 	if err != nil {
@@ -72,6 +73,7 @@ func parseWordXML(r io.Reader) (string, error) {
 	return strings.TrimSpace(text.String()), nil
 }
 
+// ExtractPptxText returns the concatenated slide text from a .pptx file.
 func ExtractPptxText(filePath string) (string, error) {
 	r, err := zip.OpenReader(filePath)
 	if err != nil {
@@ -162,6 +164,7 @@ func parseSlideXML(r io.Reader) (string, error) {
 	return text.String(), nil
 }
 
+// ExtractXlsxText returns the flattened cell text across every sheet of an .xlsx file.
 func ExtractXlsxText(filePath string) (string, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
@@ -193,6 +196,7 @@ func ExtractXlsxText(filePath string) (string, error) {
 	return strings.TrimSpace(result), nil
 }
 
+// ExtractOfficeText dispatches to the correct office text extractor based on file extension.
 func ExtractOfficeText(filePath string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(filePath))
 	switch ext {

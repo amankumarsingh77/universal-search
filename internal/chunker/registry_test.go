@@ -82,13 +82,11 @@ func TestMimeType(t *testing.T) {
 }
 
 func TestChunkFile_HEICTranscodes(t *testing.T) {
-	// Stub out the real ffmpeg call so the test runs without a real HEIC file.
+	// Inject a stub transcoder so the test runs without a real HEIC file.
 	fakeJPEG := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10} // JPEG magic bytes
-	orig := transcodeHEIC
-	transcodeHEIC = func(_ string) ([]byte, error) {
+	reg := NewRegistry().WithHEICTranscoder(func(_ string) ([]byte, error) {
 		return fakeJPEG, nil
-	}
-	defer func() { transcodeHEIC = orig }()
+	})
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "photo.heic")
@@ -96,7 +94,7 @@ func TestChunkFile_HEICTranscodes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chunks, ft, err := ChunkFile(path)
+	chunks, ft, err := reg.ChunkFile(path)
 	if err != nil {
 		t.Fatalf("ChunkFile HEIC error: %v", err)
 	}
@@ -115,13 +113,11 @@ func TestChunkFile_HEICTranscodes(t *testing.T) {
 }
 
 func TestChunkFile_HEICOversizedSkipsTranscode(t *testing.T) {
-	orig := transcodeHEIC
 	called := false
-	transcodeHEIC = func(_ string) ([]byte, error) {
+	reg := NewRegistry().WithHEICTranscoder(func(_ string) ([]byte, error) {
 		called = true
 		return []byte{0xff, 0xd8, 0xff}, nil
-	}
-	defer func() { transcodeHEIC = orig }()
+	})
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "huge.heic")
@@ -137,7 +133,7 @@ func TestChunkFile_HEICOversizedSkipsTranscode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	chunks, ft, err := ChunkFile(path)
+	chunks, ft, err := reg.ChunkFile(path)
 	if ft != TypeImage {
 		t.Errorf("expected TypeImage, got %q", ft)
 	}

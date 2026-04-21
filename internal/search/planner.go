@@ -10,9 +10,21 @@ import (
 	"universal-search/internal/vectorstore"
 )
 
-// DefaultBruteForceThreshold is the file count below which brute-force cosine
-// search is preferred over HNSW post-filtering.
-const DefaultBruteForceThreshold = 5000
+// PlannerConfig holds tunable parameters for Planner routing.
+type PlannerConfig struct {
+	BruteForceThreshold int
+	OverFetchMultiplier int
+}
+
+// DefaultPlannerConfig returns the historical defaults (5000 threshold, 5× over-fetch).
+func DefaultPlannerConfig() PlannerConfig {
+	return PlannerConfig{BruteForceThreshold: 5000, OverFetchMultiplier: 5}
+}
+
+// DefaultBruteForceThreshold is retained only as a compatibility alias for
+// tests and for app.getBruteForceThreshold's fallback. Production code should
+// source the threshold from *config.Config.
+var DefaultBruteForceThreshold = DefaultPlannerConfig().BruteForceThreshold
 
 // PlannerStore is the subset of store.Store methods required by the Planner.
 type PlannerStore interface {
@@ -27,21 +39,34 @@ type PlannerStore interface {
 // Planner routes search requests between brute-force cosine search and
 // HNSW post-filtering based on the size of the filtered candidate set.
 type Planner struct {
-	store     PlannerStore
-	index     *vectorstore.Index
-	threshold int
-	logger    *slog.Logger
+	store        PlannerStore
+	index        *vectorstore.Index
+	threshold    int
+	overFetchMul int
+	logger       *slog.Logger
 }
 
-// NewPlanner creates a new Planner. threshold is the file count below which
-// brute-force cosine search is used instead of HNSW post-filtering.
-func NewPlanner(s PlannerStore, idx *vectorstore.Index, threshold int) *Planner {
-	return &Planner{store: s, index: idx, threshold: threshold, logger: slog.Default()}
+// NewPlanner creates a new Planner with the given config. Zero-valued fields
+// fall back to DefaultPlannerConfig.
+func NewPlanner(s PlannerStore, idx *vectorstore.Index, cfg PlannerConfig) *Planner {
+	return NewPlannerWithLogger(s, idx, cfg, slog.Default())
 }
 
 // NewPlannerWithLogger creates a Planner with a custom logger.
-func NewPlannerWithLogger(s PlannerStore, idx *vectorstore.Index, threshold int, logger *slog.Logger) *Planner {
-	return &Planner{store: s, index: idx, threshold: threshold, logger: logger}
+func NewPlannerWithLogger(s PlannerStore, idx *vectorstore.Index, cfg PlannerConfig, logger *slog.Logger) *Planner {
+	// Only over-fetch multiplier gets a default; the caller is trusted to pass
+	// whatever threshold they want (threshold=0 is a valid value that forces
+	// the HNSW post-filter path for tests).
+	if cfg.OverFetchMultiplier <= 0 {
+		cfg.OverFetchMultiplier = DefaultPlannerConfig().OverFetchMultiplier
+	}
+	return &Planner{
+		store:        s,
+		index:        idx,
+		threshold:    cfg.BruteForceThreshold,
+		overFetchMul: cfg.OverFetchMultiplier,
+		logger:       logger,
+	}
 }
 
 // Plan routes between brute-force and HNSW post-filter based on cardinality.
@@ -55,7 +80,7 @@ func (p *Planner) Plan(queryVec []float32, spec query.FilterSpec, k int) ([]stor
 	// No SQL-computable filters → pure semantic HNSW search.
 	if len(storeSpec.Must) == 0 && len(storeSpec.MustNot) == 0 {
 		p.logger.Debug("planner: no SQL filters, using pure semantic HNSW search", "k", k)
-		results, err := p.index.Search(queryVec, k*5)
+		results, err := p.index.Search(queryVec, k*p.overFetchMul)
 		if err != nil {
 			return nil, "semantic", 0, err
 		}
@@ -121,7 +146,7 @@ func (p *Planner) Plan(queryVec []float32, spec query.FilterSpec, k int) ([]stor
 	if err != nil {
 		return nil, "hnsw_post_filter", count, err
 	}
-	ef := clampEf(k, totalFiles, count)
+	ef := clampEf(k, totalFiles, count, p.overFetchMul*2)
 	p.logger.Debug("planner: using HNSW post-filter path",
 		"file_count", count,
 		"total_files", totalFiles,
@@ -317,12 +342,16 @@ func cosineDist(a, b []float32) float32 {
 }
 
 // clampEf computes the ef (exploration factor) for HNSW over-fetching:
-// ef = clamp(k * 10 * totalFiles / count, 64, 500).
-func clampEf(k, totalFiles, count int) int {
+// ef = clamp(k * mul * totalFiles / count, 64, 500).
+// mul is derived from the caller's over-fetch multiplier (defaults to 10).
+func clampEf(k, totalFiles, count, mul int) int {
 	if count == 0 {
 		return 64
 	}
-	ef := k * 10 * totalFiles / count
+	if mul <= 0 {
+		mul = 10
+	}
+	ef := k * mul * totalFiles / count
 	if ef < 64 {
 		ef = 64
 	}

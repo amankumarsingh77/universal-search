@@ -12,7 +12,19 @@ import (
 	"google.golang.org/genai"
 )
 
-const llmModelName = "gemini-2.5-flash-lite"
+// LLMConfig holds tunables for the LLM query parser.
+type LLMConfig struct {
+	Model      string
+	TimeoutMs  int
+	MaxRetries int
+}
+
+// DefaultLLMConfig returns fallback values used only when no *config.Config is
+// available (e.g. in unit tests of this package). Production wires these from
+// config.toml via NewLLMParserWithConfig.
+func DefaultLLMConfig() LLMConfig {
+	return LLMConfig{Model: "gemini-2.5-flash-lite", TimeoutMs: 500, MaxRetries: 2}
+}
 
 // generateContentFn is a function type that matches genai.Models.GenerateContent,
 // used as a testable seam in LLMParser.
@@ -20,23 +32,42 @@ type generateContentFn func(ctx context.Context, model string, contents []*genai
 
 // LLMParser parses a query using Gemini Flash-Lite with tool-call mode.
 type LLMParser struct {
-	client   *genai.Client
-	limiter  interface{ Allow() bool }
-	model    string
-	logger   *slog.Logger
-	generate generateContentFn // testable seam; defaults to client.Models.GenerateContent
+	client     *genai.Client
+	limiter    interface{ Allow() bool }
+	model      string
+	maxRetries int
+	logger     *slog.Logger
+	generate   generateContentFn // testable seam; defaults to client.Models.GenerateContent
 }
 
-// NewLLMParser creates an LLMParser with the given client and rate limiter.
+// NewLLMParser creates an LLMParser using DefaultLLMConfig. Retained for
+// callers that do not yet thread config through.
 func NewLLMParser(client *genai.Client, limiter interface{ Allow() bool }) *LLMParser {
-	p := &LLMParser{
-		client:  client,
-		limiter: limiter,
-		model:   llmModelName,
-		logger:  slog.Default().WithGroup("llmparser"),
+	return NewLLMParserWithConfig(client, limiter, DefaultLLMConfig())
+}
+
+// NewLLMParserWithConfig creates an LLMParser from the given config.
+func NewLLMParserWithConfig(client *genai.Client, limiter interface{ Allow() bool }, cfg LLMConfig) *LLMParser {
+	def := DefaultLLMConfig()
+	if cfg.Model == "" {
+		cfg.Model = def.Model
 	}
-	p.generate = func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
-		return client.Models.GenerateContent(ctx, model, contents, config)
+	// MaxRetries: 0 is a valid value (no retries), so only fall back on
+	// negative values.
+	if cfg.MaxRetries < 0 {
+		cfg.MaxRetries = def.MaxRetries
+	}
+	p := &LLMParser{
+		client:     client,
+		limiter:    limiter,
+		model:      cfg.Model,
+		maxRetries: cfg.MaxRetries,
+		logger:     slog.Default().WithGroup("llmparser"),
+	}
+	if client != nil {
+		p.generate = func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+			return client.Models.GenerateContent(ctx, model, contents, config)
+		}
 	}
 	return p
 }
@@ -196,7 +227,7 @@ func decodeToolCallResponse(resp *genai.GenerateContentResponse) (FilterSpec, er
 // a user-role turn. On transport error on the first call, returns grammarSpec.
 // On exhausted retries, returns the last response (never errors out).
 func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpec FilterSpec) (FilterSpec, error) {
-	const maxRetries = 2
+	maxRetries := p.maxRetries
 	systemPrompt := buildSystemPrompt(time.Now())
 	config := buildToolCallConfig(systemPrompt)
 

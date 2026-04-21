@@ -8,24 +8,6 @@ import (
 	"universal-search/internal/store"
 )
 
-// makeResult creates a SearchResult with the given distance and file.
-func makeResult(path string, distance float32) store.SearchResult {
-	return store.SearchResult{
-		File:     store.FileRecord{Path: path},
-		VectorID: path + "-vec",
-		Distance: distance,
-	}
-}
-
-// makeResultWithFile creates a SearchResult with a fully-populated FileRecord.
-func makeResultWithFile(f store.FileRecord, distance float32) store.SearchResult {
-	return store.SearchResult{
-		File:     f,
-		VectorID: f.Path + "-vec",
-		Distance: distance,
-	}
-}
-
 // TestRerank_ShouldBoostApplied verifies that a Should clause with Boost=1.5
 // multiplies into the final score.
 // cos_sim = 1 - Distance/2 = 1 - 0.4/2 = 0.8

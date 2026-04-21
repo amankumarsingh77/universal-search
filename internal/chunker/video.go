@@ -20,6 +20,7 @@ type videoTimeRange struct {
 	Index int
 }
 
+// GetVideoDuration returns the duration in seconds of a video file via ffprobe.
 func GetVideoDuration(path string) (float64, error) {
 	out, err := exec.Command("ffprobe",
 		"-v", "error",
@@ -106,6 +107,7 @@ func preprocessChunk(inputPath, outputPath string) error {
 	).Run()
 }
 
+// ChunkVideo splits a video into overlapping 480p/5fps clips ready for embedding.
 func ChunkVideo(filePath string) ([]Chunk, error) {
 	if _, err := os.Stat(filePath); err != nil {
 		return nil, fmt.Errorf("video file not found: %w", err)

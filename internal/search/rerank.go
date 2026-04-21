@@ -8,6 +8,31 @@ import (
 	"universal-search/internal/store"
 )
 
+// RerankerConfig holds tunables for Rerank scoring.
+type RerankerConfig struct {
+	RecencyBoostMultiplier float32
+	RecencyWindowDays      int
+}
+
+// DefaultRerankerConfig returns the historical defaults.
+func DefaultRerankerConfig() RerankerConfig {
+	return RerankerConfig{RecencyBoostMultiplier: 1.2, RecencyWindowDays: 30}
+}
+
+// Reranker applies should-boost and recency scoring to search results.
+type Reranker struct {
+	recencyMult float32
+}
+
+// NewReranker builds a Reranker from cfg. Zero fields fall back to defaults.
+func NewReranker(cfg RerankerConfig) *Reranker {
+	def := DefaultRerankerConfig()
+	if cfg.RecencyBoostMultiplier == 0 {
+		cfg.RecencyBoostMultiplier = def.RecencyBoostMultiplier
+	}
+	return &Reranker{recencyMult: cfg.RecencyBoostMultiplier}
+}
+
 // Rerank applies should-boost and recency multiplier to results.
 //
 // final_score = cos_sim * product(matched_should_boosts) * recency_mult
@@ -16,35 +41,35 @@ import (
 //   - cos_sim = 1 - Distance/2  (same formula as App.Search Score)
 //   - should boost product: for each Should clause that matches the result's
 //     file (file_type or extension), if Boost > 0 multiply into the product.
-//   - recency_mult = 1.2 if spec has a Must clause on FieldModifiedAt AND the
-//     file's ModifiedAt satisfies the clause bounds; else 1.0.
+//   - recency_mult = r.recencyMult if spec has a Must clause on FieldModifiedAt
+//     AND the file's ModifiedAt satisfies the clause bounds; else 1.0.
 //
 // Returns results sorted by FinalScore descending.
-func Rerank(results []store.SearchResult, spec query.FilterSpec) []store.SearchResult {
+func (r *Reranker) Rerank(results []store.SearchResult, spec query.FilterSpec) []store.SearchResult {
 	out := make([]store.SearchResult, len(results))
 	copy(out, results)
 
 	hasDateMust := hasModifiedAtMust(spec.Must)
 
 	for i := range out {
-		r := &out[i]
-		cosSim := float32(1) - r.Distance/2
+		res := &out[i]
+		cosSim := float32(1) - res.Distance/2
 
 		// Compute should boost product.
 		boostProduct := float32(1.0)
 		for _, clause := range spec.Should {
-			if clause.Boost > 0 && shouldClauseMatchesFile(clause, r.File) {
+			if clause.Boost > 0 && shouldClauseMatchesFile(clause, res.File) {
 				boostProduct *= clause.Boost
 			}
 		}
 
 		// Compute recency multiplier.
 		recencyMult := float32(1.0)
-		if hasDateMust && fileInDateMustRange(r.File, spec.Must) {
-			recencyMult = 1.2
+		if hasDateMust && fileInDateMustRange(res.File, spec.Must) {
+			recencyMult = r.recencyMult
 		}
 
-		r.FinalScore = cosSim * boostProduct * recencyMult
+		res.FinalScore = cosSim * boostProduct * recencyMult
 	}
 
 	sort.Slice(out, func(i, j int) bool {
@@ -52,6 +77,12 @@ func Rerank(results []store.SearchResult, spec query.FilterSpec) []store.SearchR
 	})
 
 	return out
+}
+
+// Rerank is a package-level helper that constructs a default Reranker and
+// applies it; retained so existing tests compile unchanged.
+func Rerank(results []store.SearchResult, spec query.FilterSpec) []store.SearchResult {
+	return NewReranker(DefaultRerankerConfig()).Rerank(results, spec)
 }
 
 // hasModifiedAtMust reports whether any Must clause targets FieldModifiedAt.

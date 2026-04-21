@@ -7,6 +7,7 @@ import { IndexingBar } from './components/IndexingBar';
 import { FolderManager } from './components/FolderManager';
 import ApiKeyDialog from './components/ApiKeyDialog';
 import Toast from './components/Toast';
+import ReindexBanner from './components/ReindexBanner';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
@@ -27,6 +28,7 @@ function App() {
     removeChip,
     forceParseQuery,
     isOffline,
+    errorCode,
   } = useSearch();
 
   const indexingStatus = useIndexingStatus();
@@ -80,6 +82,17 @@ function App() {
     });
     return () => {
       EventsOff('window-shown');
+    };
+  }, []);
+
+  useEffect(() => {
+    const _cancel = EventsOn('backend-error', (payload: { code?: string; message?: string }) => {
+      const code = payload?.code ?? 'ERR_INTERNAL';
+      const message = payload?.message ?? 'An unexpected error occurred';
+      setToast({ message: `${message} (${code})`, type: 'error' });
+    });
+    return () => {
+      EventsOff('backend-error');
     };
   }, []);
 
@@ -170,6 +183,7 @@ function App() {
         banner={banner}
         onForceParseQuery={forceParseQuery}
       />
+      <ReindexBanner errorCode={errorCode} />
       <div style={styles.body}>
         {(() => {
           const trimmedQuery = query.trim();

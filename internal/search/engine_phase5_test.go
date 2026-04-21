@@ -17,7 +17,7 @@ func TestSearchWithSpecResult_ReturnsStruct(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	fileID, err := db.UpsertFile(store.FileRecord{
 		Path: "/tmp/phase5-test.txt", FileType: "text", Extension: ".txt", SizeBytes: 100,
@@ -35,7 +35,7 @@ func TestSearchWithSpecResult_ReturnsStruct(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	planner := NewPlanner(db, idx, DefaultBruteForceThreshold)
+	planner := NewPlanner(db, idx, DefaultPlannerConfig())
 	engine := NewWithPlanner(db, idx, testLogger, planner)
 
 	queryVec := make([]float32, 768)
@@ -61,7 +61,7 @@ func TestSearchWithSpecResult_FilenameMatchAtTop(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Insert a semantic file
 	semFileID, err := db.UpsertFile(store.FileRecord{
@@ -88,7 +88,7 @@ func TestSearchWithSpecResult_FilenameMatchAtTop(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	planner := NewPlanner(db, idx, DefaultBruteForceThreshold)
+	planner := NewPlanner(db, idx, DefaultPlannerConfig())
 	engine := NewWithPlanner(db, idx, testLogger, planner)
 
 	queryVec := make([]float32, 768)
@@ -125,7 +125,7 @@ func TestSearchWithSpecResult_RelaxationBannerSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Insert a file that will be found after relaxation (no date filter match)
 	fileID, err := db.UpsertFile(store.FileRecord{
@@ -144,7 +144,7 @@ func TestSearchWithSpecResult_RelaxationBannerSet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	planner := NewPlanner(db, idx, DefaultBruteForceThreshold)
+	planner := NewPlanner(db, idx, DefaultPlannerConfig())
 	engine := NewWithPlanner(db, idx, testLogger, planner)
 
 	queryVec := make([]float32, 768)

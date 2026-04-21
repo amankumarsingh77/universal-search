@@ -28,15 +28,52 @@ type Index struct {
 	logger  *slog.Logger
 }
 
-// NewIndex creates a new HNSW vector index with default parameters:
-// M=16, Ml=0.25, EfSearch=200, CosineDistance.
-func NewIndex(logger *slog.Logger) *Index {
+// HNSWConfig holds the tunable parameters for a new HNSW index.
+// Distance accepts "cosine" (default); unknown values are treated as cosine.
+type HNSWConfig struct {
+	M              int
+	Ml             float64
+	EfSearch       int
+	EfConstruction int
+	Distance       string
+}
+
+// defaultHNSWConfig returns the historical defaults used before config wiring.
+func defaultHNSWConfig() HNSWConfig {
+	return HNSWConfig{M: 16, Ml: 0.25, EfSearch: 200, EfConstruction: 200, Distance: "cosine"}
+}
+
+// NewDefaultIndex constructs an Index using the historical defaults. Intended
+// for tests and legacy call sites that have not yet been wired to config.
+func NewDefaultIndex(logger *slog.Logger) *Index {
+	return NewIndex(defaultHNSWConfig(), logger)
+}
+
+// NewIndex creates a new HNSW vector index from the given config.
+// If cfg has zero values they are replaced by the package defaults.
+func NewIndex(cfg HNSWConfig, logger *slog.Logger) *Index {
 	log := logger.WithGroup("vectorstore")
-	g, err := hnsw.NewGraphWithConfig[int](16, 0.25, 200, hnsw.CosineDistance)
+	def := defaultHNSWConfig()
+	if cfg.M == 0 {
+		cfg.M = def.M
+	}
+	if cfg.Ml == 0 {
+		cfg.Ml = def.Ml
+	}
+	if cfg.EfSearch == 0 {
+		cfg.EfSearch = def.EfSearch
+	}
+	dist := hnsw.CosineDistance
+	if cfg.Distance != "" && cfg.Distance != "cosine" {
+		log.Warn("unknown hnsw distance, falling back to cosine", "distance", cfg.Distance)
+	}
+	g, err := hnsw.NewGraphWithConfig[int](cfg.M, cfg.Ml, cfg.EfSearch, dist)
 	if err != nil {
 		panic(fmt.Sprintf("failed to create HNSW graph: %v", err))
 	}
-	log.Info("created new vector index")
+	log.Info("created new vector index",
+		"m", cfg.M, "ml", cfg.Ml, "ef_search", cfg.EfSearch, "distance", cfg.Distance,
+	)
 	return &Index{
 		graph:   g,
 		idToKey: make(map[string]int),

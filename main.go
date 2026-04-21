@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"log"
 	"mime"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
+	"universal-search/internal/app"
+	"universal-search/internal/config"
 	"universal-search/internal/platform"
 
 	"github.com/joho/godotenv"
@@ -18,7 +23,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // localFileHandler serves local filesystem files for preview/thumbnails.
@@ -26,7 +30,7 @@ import (
 // actual filesystem path after stripping the prefix. Access is restricted
 // to the thumbnail directory and indexed folders.
 type localFileHandler struct {
-	app *App
+	app *app.App
 }
 
 func (h *localFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -67,18 +71,7 @@ func (h *localFileHandler) isAllowedPath(filePath string) bool {
 		return true
 	}
 
-	if h.app.store != nil {
-		folders, err := h.app.store.GetIndexedFolders()
-		if err == nil {
-			for _, folder := range folders {
-				if strings.HasPrefix(filePath, folder) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
+	return app.FolderAllowed(h.app, filePath)
 }
 
 //go:embed all:frontend/dist
@@ -99,8 +92,24 @@ func init() {
 }
 
 func main() {
-	app := NewApp()
-	app.trayIcon = trayIcon
+	baseCtx, stopSignal := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignal()
+
+	configPath, err := config.Resolve()
+	if err != nil {
+		log.Fatalf("config path: %v", err)
+	}
+	cfg, warnings, err := config.Load(configPath)
+	if err != nil {
+		log.Fatalf("config load: %v", err)
+	}
+	for _, w := range warnings {
+		log.Printf("warning: %s", w.Message)
+	}
+
+	a := app.NewApp(cfg)
+	a.SetBaseContext(baseCtx)
+	app.SetTrayIcon(a, trayIcon)
 
 	// Build application menu.
 	appMenu := menu.NewMenu()
@@ -108,43 +117,39 @@ func main() {
 	// "Universal Search" app menu
 	appSubMenu := appMenu.AddSubmenu("Universal Search")
 	appSubMenu.AddText("About Universal Search", nil, func(_ *menu.CallbackData) {
-		runtime.MessageDialog(app.ctx, runtime.MessageDialogOptions{
-			Type:    runtime.InfoDialog,
-			Title:   "Universal Search",
-			Message: "Universal Search — fast local file search powered by vector embeddings.",
-		})
+		app.ShowAboutDialog(a)
 	})
 	appSubMenu.AddSeparator()
 	appSubMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
-		runtime.Quit(app.ctx)
+		a.Quit()
 	})
 
 	// "Indexing" menu
 	indexingMenu := appMenu.AddSubmenu("Indexing")
 	indexingMenu.AddText("Re-index Now", keys.CmdOrCtrl("r"), func(_ *menu.CallbackData) {
-		app.ReindexNow()
+		a.ReindexNow()
 	})
 	indexingMenu.AddText("Pause Indexing", nil, func(_ *menu.CallbackData) {
-		app.PauseIndexing()
+		a.PauseIndexing()
 	})
 	indexingMenu.AddText("Resume Indexing", nil, func(_ *menu.CallbackData) {
-		app.ResumeIndexing()
+		a.ResumeIndexing()
 	})
 
 	// "Settings" menu
 	settingsMenu := appMenu.AddSubmenu("Settings")
 	settingsMenu.AddText("Manage Folders...", keys.CmdOrCtrl("o"), func(cd *menu.CallbackData) {
-		runtime.EventsEmit(app.ctx, "open-folder-manager")
+		a.EmitEvent("open-folder-manager")
 	})
 	settingsMenu.AddText("Set API Key…", nil, func(_ *menu.CallbackData) {
-		runtime.WindowShow(app.ctx)
-		runtime.EventsEmit(app.ctx, "open-api-key-dialog")
+		a.ShowWindow()
+		a.EmitEvent("open-api-key-dialog")
 	})
 
 	// Add the native macOS Edit menu so that Cmd+V/C/A/Z work in all input fields.
 	appMenu.Append(menu.EditMenu())
 
-	err := wails.Run(&options.App{
+	err = wails.Run(&options.App{
 		Title:     "Universal Search",
 		Width:     960,
 		Height:    600,
@@ -153,12 +158,12 @@ func main() {
 		Menu:      appMenu,
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
-			Handler: &localFileHandler{app: app},
+			Handler: &localFileHandler{app: a},
 		},
-		OnStartup:  app.startup,
-		OnShutdown: app.shutdown,
+		OnStartup:  app.OnStartup(a),
+		OnShutdown: app.OnShutdown(a),
 		Bind: []interface{}{
-			app,
+			a,
 		},
 		Frameless:         true,
 		AlwaysOnTop:       true,

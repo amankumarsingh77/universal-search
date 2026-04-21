@@ -25,7 +25,29 @@ func FilenameMatch(ctx context.Context, s FilenameStore, rawQuery string) []stor
 	return results
 }
 
+// MergerConfig toggles filename-match merging.
+type MergerConfig struct {
+	Enabled bool
+}
+
+// DefaultMergerConfig enables filename merging by default.
+func DefaultMergerConfig() MergerConfig {
+	return MergerConfig{Enabled: true}
+}
+
+// Merger unions semantic search results with filename matches.
+type Merger struct {
+	enabled bool
+}
+
+// NewMerger builds a Merger from cfg.
+func NewMerger(cfg MergerConfig) *Merger {
+	return &Merger{enabled: cfg.Enabled}
+}
+
 // MergeWithFilenameResults unions semantic search results with filename matches.
+// When Merger.enabled is false, only the semantic results (trimmed to k) are
+// returned.
 //
 // Merge strategy:
 //  1. Filename matches whose path contains rawQuery as a substring are placed first.
@@ -33,7 +55,33 @@ func FilenameMatch(ctx context.Context, s FilenameStore, rawQuery string) []stor
 //  3. Deduplicates by file path — a file already in semantic results is not
 //     duplicated if it also appears in filename matches.
 //  4. Returns at most k results.
+func (m *Merger) MergeWithFilenameResults(
+	semantic []store.SearchResult,
+	filename []store.FileRecord,
+	rawQuery string,
+	k int,
+) []store.SearchResult {
+	if !m.enabled {
+		out := semantic
+		if len(out) > k {
+			out = out[:k]
+		}
+		return out
+	}
+	return mergeWithFilenameResults(semantic, filename, rawQuery, k)
+}
+
+// MergeWithFilenameResults is the package-level helper (defaults to enabled).
 func MergeWithFilenameResults(
+	semantic []store.SearchResult,
+	filename []store.FileRecord,
+	rawQuery string,
+	k int,
+) []store.SearchResult {
+	return mergeWithFilenameResults(semantic, filename, rawQuery, k)
+}
+
+func mergeWithFilenameResults(
 	semantic []store.SearchResult,
 	filename []store.FileRecord,
 	rawQuery string,

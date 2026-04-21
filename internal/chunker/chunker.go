@@ -1,5 +1,6 @@
 package chunker
 
+// Chunk represents a single extractable unit of content from a file.
 type Chunk struct {
 	Content   []byte
 	Text      string
@@ -11,4 +12,5 @@ type Chunk struct {
 	Index     int
 }
 
+// Strategy produces chunks from a file at the given path.
 type Strategy func(filePath string) ([]Chunk, error)

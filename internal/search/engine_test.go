@@ -5,12 +5,14 @@ import (
 	"log/slog"
 	"testing"
 
+	"universal-search/internal/apperr"
 	"universal-search/internal/query"
 	"universal-search/internal/store"
 	"universal-search/internal/vectorstore"
 )
 
 var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+var apperrErrModelMismatch = apperr.ErrModelMismatch
 
 func TestEngine_SearchReturnsRankedResults(t *testing.T) {
 	db, err := store.NewStore(":memory:", testLogger)
@@ -18,7 +20,7 @@ func TestEngine_SearchReturnsRankedResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Insert a file + chunk
 	fileID, err := db.UpsertFile(store.FileRecord{
@@ -42,7 +44,7 @@ func TestEngine_SearchReturnsRankedResults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	engine := New(db, idx, testLogger)
+	engine := New(db, idx, testLogger, DefaultEngineConfig())
 
 	// Search with similar vector
 	query := make([]float32, 768)
@@ -68,7 +70,7 @@ func TestEngine_DeduplicatesByFilePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Insert one file with two chunks
 	fileID, err := db.UpsertFile(store.FileRecord{
@@ -102,7 +104,7 @@ func TestEngine_DeduplicatesByFilePath(t *testing.T) {
 	vecB[1] = 0.2
 	idx.Add("vec-b", vecB)
 
-	engine := New(db, idx, testLogger)
+	engine := New(db, idx, testLogger, DefaultEngineConfig())
 
 	query := make([]float32, 768)
 	query[0] = 1.0
@@ -128,7 +130,7 @@ func TestEngine_PropagatesDistance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	fileID, err := db.UpsertFile(store.FileRecord{
 		Path: "/tmp/dist.txt", FileType: "text", Extension: ".txt",
@@ -150,7 +152,7 @@ func TestEngine_PropagatesDistance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	engine := New(db, idx, testLogger)
+	engine := New(db, idx, testLogger, DefaultEngineConfig())
 
 	// Identical query vector → cosine distance should be ~0 (not left as Go zero)
 	// We can't assert exact value, but we can assert it was set (non-negative float32).
@@ -177,7 +179,7 @@ func TestEngine_DeduplicatesByLowestDistance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	fileID, err := db.UpsertFile(store.FileRecord{
 		Path: "/tmp/dedup-dist.txt", FileType: "text", Extension: ".txt",
@@ -209,7 +211,7 @@ func TestEngine_DeduplicatesByLowestDistance(t *testing.T) {
 	vecFar[1] = 1.0
 	idx.Add("vec-far", vecFar)
 
-	engine := New(db, idx, testLogger)
+	engine := New(db, idx, testLogger, DefaultEngineConfig())
 
 	query := make([]float32, 768)
 	query[0] = 1.0
@@ -234,9 +236,9 @@ func TestEngine_SearchEmptyIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
-	engine := New(db, idx, testLogger)
+	engine := New(db, idx, testLogger, DefaultEngineConfig())
 
 	queryVec := make([]float32, 768)
 	queryVec[0] = 1.0
@@ -256,7 +258,7 @@ func TestEngine_SearchWithSpec_EmptySpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	fileID, err := db.UpsertFile(store.FileRecord{
 		Path: "/tmp/test-spec.txt", FileType: "text", Extension: ".txt", SizeBytes: 100,
@@ -274,7 +276,7 @@ func TestEngine_SearchWithSpec_EmptySpec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	planner := NewPlanner(db, idx, DefaultBruteForceThreshold)
+	planner := NewPlanner(db, idx, DefaultPlannerConfig())
 	engine := NewWithPlanner(db, idx, testLogger, planner)
 
 	queryVec := make([]float32, 768)
@@ -290,4 +292,92 @@ func TestEngine_SearchWithSpec_EmptySpec(t *testing.T) {
 	if len(res.Results) == 0 {
 		t.Errorf("expected results, got none")
 	}
+}
+
+// TestEngine_ModelMatch_ReturnsResults (REF-061): when the engine's configured
+// model equals the embedding_model on each chunk, results flow through normally.
+func TestEngine_ModelMatch_ReturnsResults(t *testing.T) {
+	db, err := store.NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	idx := vectorstore.NewDefaultIndex(testLogger)
+
+	fileID, err := db.UpsertFile(store.FileRecord{
+		Path: "/tmp/a.txt", FileType: "text", Extension: ".txt", SizeBytes: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertChunk(store.ChunkRecord{
+		FileID: fileID, VectorID: "v1", ChunkIndex: 0,
+		EmbeddingModel: "fake-a", EmbeddingDims: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	vec := []float32{1, 0, 0, 0}
+	if err := idx.Add("v1", vec); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DefaultEngineConfig()
+	planner := NewPlannerWithLogger(db, idx, cfg.Planner, testLogger)
+	engine := NewWithModel(db, idx, testLogger, planner, cfg, "fake-a")
+
+	res, err := engine.SearchWithSpec(vec, query.FilterSpec{}, "", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(res.Results))
+	}
+}
+
+// TestEngine_ModelMismatch_Refuses (REF-061): when all candidate chunks were
+// produced by a different embedding model, SearchWithSpec returns empty
+// results and apperr.ErrModelMismatch.
+func TestEngine_ModelMismatch_Refuses(t *testing.T) {
+	db, err := store.NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	idx := vectorstore.NewDefaultIndex(testLogger)
+
+	fileID, err := db.UpsertFile(store.FileRecord{
+		Path: "/tmp/b.txt", FileType: "text", Extension: ".txt", SizeBytes: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.InsertChunk(store.ChunkRecord{
+		FileID: fileID, VectorID: "v1", ChunkIndex: 0,
+		EmbeddingModel: "fake-a", EmbeddingDims: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	vec := []float32{1, 0, 0, 0}
+	if err := idx.Add("v1", vec); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := DefaultEngineConfig()
+	planner := NewPlannerWithLogger(db, idx, cfg.Planner, testLogger)
+	engine := NewWithModel(db, idx, testLogger, planner, cfg, "fake-b")
+
+	res, err := engine.SearchWithSpec(vec, query.FilterSpec{}, "", 5)
+	if err == nil {
+		t.Fatalf("expected ErrModelMismatch, got nil (results=%d)", len(res.Results))
+	}
+	if !errorsIsModelMismatch(err) {
+		t.Fatalf("expected apperr.ErrModelMismatch, got %v", err)
+	}
+	if len(res.Results) != 0 {
+		t.Errorf("expected empty results, got %d", len(res.Results))
+	}
+}
+
+func errorsIsModelMismatch(err error) bool {
+	return err == apperrErrModelMismatch
 }

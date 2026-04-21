@@ -11,20 +11,16 @@ import (
 	"google.golang.org/genai"
 )
 
-// newTestEmbedder builds an *Embedder wired to an injected embedFn that
-// drives the real (*Embedder).EmbedBatch implementation without touching the
-// network. fn receives the number of inputs in the current batch and returns
-// the vectors (or an error) for that batch.
-func newTestEmbedder(fn func(batchSize int) ([][]float32, error)) *Embedder {
-	e := &Embedder{
-		model:   DefaultModel,
-		dims:    3,
-		limiter: NewRateLimiter(1000, time.Minute),
-		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	e.embedFn = func(_ context.Context, _ string, contents []*genai.Content, _ *genai.EmbedContentConfig) ([][]float32, error) {
+// newTestEmbedder builds a *GeminiEmbedder wired to an injected doer that
+// drives the real (*GeminiEmbedder).EmbedBatch implementation without touching
+// the network. fn receives the number of inputs in the current batch and
+// returns the vectors (or an error) for that batch.
+func newTestEmbedder(fn func(batchSize int) ([][]float32, error)) *GeminiEmbedder {
+	doer := func(_ context.Context, _ string, contents []*genai.Content, _ *genai.EmbedContentConfig) ([][]float32, error) {
 		return fn(len(contents))
 	}
+	e := newWithFunc(doer, 3, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.limiter = NewRateLimiter(1000, time.Minute)
 	return e
 }
 
@@ -208,15 +204,15 @@ func TestEmbedBatch_ExactlyMaxBatchSize(t *testing.T) {
 		return makeVecs(batchSize, 0), nil
 	})
 
-	result, err := e.EmbedBatch(context.Background(), makeChunks(maxBatchSize))
+	result, err := e.EmbedBatch(context.Background(), makeChunks(DefaultGeminiConfig().BatchSize))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if calls != 1 {
-		t.Fatalf("expected 1 call for exactly %d chunks, got %d", maxBatchSize, calls)
+		t.Fatalf("expected 1 call for exactly %d chunks, got %d", DefaultGeminiConfig().BatchSize, calls)
 	}
-	if len(result) != maxBatchSize {
-		t.Fatalf("expected %d results, got %d", maxBatchSize, len(result))
+	if len(result) != DefaultGeminiConfig().BatchSize {
+		t.Fatalf("expected %d results, got %d", DefaultGeminiConfig().BatchSize, len(result))
 	}
 }
 

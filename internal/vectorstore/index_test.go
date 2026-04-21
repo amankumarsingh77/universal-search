@@ -12,7 +12,7 @@ import (
 var testLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func TestVectorIndex_AddAndSearch(t *testing.T) {
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 
 	vec1 := make([]float32, 768)
 	vec1[0] = 1.0
@@ -47,7 +47,7 @@ func TestVectorIndex_SaveAndLoad(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.hnsw")
 
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	vec := make([]float32, 768)
 	vec[0] = 1.0
 	idx.Add("id-1", vec)
@@ -78,7 +78,7 @@ func TestVectorIndex_SaveAndLoad(t *testing.T) {
 }
 
 func TestVectorIndex_Delete(t *testing.T) {
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	vec := make([]float32, 768)
 	vec[0] = 1.0
 	idx.Add("id-1", vec)
@@ -96,7 +96,7 @@ func TestVectorIndex_Delete(t *testing.T) {
 
 // REQ-010: Has() returns true after Add, false for unknown ID, false after Delete.
 func TestVectorIndex_Has_AfterAdd(t *testing.T) {
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	vec := make([]float32, 768)
 	vec[0] = 1.0
 
@@ -112,7 +112,7 @@ func TestVectorIndex_Has_AfterAdd(t *testing.T) {
 
 // REQ-010: Has() returns false for unknown ID.
 func TestVectorIndex_Has_UnknownID(t *testing.T) {
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	if idx.Has("does-not-exist") {
 		t.Fatal("Has should return false for unknown ID")
 	}
@@ -120,7 +120,7 @@ func TestVectorIndex_Has_UnknownID(t *testing.T) {
 
 // REQ-010: Has() returns false after Delete.
 func TestVectorIndex_Has_AfterDelete(t *testing.T) {
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	vec := make([]float32, 768)
 	vec[0] = 1.0
 	idx.Add("id-1", vec)
@@ -133,7 +133,7 @@ func TestVectorIndex_Has_AfterDelete(t *testing.T) {
 
 // EDGE-014: Has() returns true for in-memory vector before Save() to disk.
 func TestVectorIndex_Has_BeforeSave(t *testing.T) {
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	vec := make([]float32, 768)
 	vec[0] = 1.0
 	idx.Add("id-inmem", vec)
@@ -149,7 +149,7 @@ func TestVectorIndex_Save_AtomicNoTmpFiles(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.hnsw")
 
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	vec := make([]float32, 768)
 	vec[0] = 1.0
 	idx.Add("id-1", vec)
@@ -201,7 +201,7 @@ func TestLoadIndex_MissingMap(t *testing.T) {
 	path := filepath.Join(dir, "nomap.hnsw")
 
 	// Create and save a valid index to get a proper .graph file.
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	vec := make([]float32, 768)
 	vec[0] = 1.0
 	idx.Add("id-1", vec)
@@ -226,7 +226,7 @@ func TestLoadIndex_IgnoresTmpFiles(t *testing.T) {
 	path := filepath.Join(dir, "mixed.hnsw")
 
 	// Save a valid index.
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	vec := make([]float32, 768)
 	vec[0] = 1.0
 	idx.Add("id-1", vec)
@@ -258,7 +258,7 @@ func TestLoadIndex_IgnoresTmpFiles(t *testing.T) {
 // nil search point. Adding 200 vectors at 768 dimensions reliably exercises
 // the multi-layer code path.
 func TestVectorIndex_Add_ManyVectors_NoNeighborhoodError(t *testing.T) {
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	for i := 0; i < 200; i++ {
 		vec := make([]float32, 768)
 		vec[i%768] = 1.0
@@ -273,7 +273,7 @@ func TestVectorIndex_RoundTrip_AllIDs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "roundtrip.hnsw")
 
-	idx := NewIndex(testLogger)
+	idx := NewDefaultIndex(testLogger)
 	ids := []string{"alpha", "beta", "gamma", "delta"}
 	for i, id := range ids {
 		vec := make([]float32, 768)

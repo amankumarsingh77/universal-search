@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"universal-search/internal/config"
 	"universal-search/internal/indexer"
 	"universal-search/internal/store"
 	"universal-search/internal/vectorstore"
@@ -19,13 +20,14 @@ func newTestAppFull(t *testing.T) *App {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	idx := vectorstore.NewIndex(slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	idx := vectorstore.NewDefaultIndex(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	p := indexer.NewPipeline(s, idx, nil, t.TempDir(), logger, nil)
+	p := indexer.NewPipeline(s, idx, nil, t.TempDir(), logger, nil, indexer.DefaultPipelineConfig())
 	t.Cleanup(func() { p.Stop() })
 
 	return &App{
 		ctx:      context.Background(),
+		cfg:      config.DefaultConfig(),
 		logger:   logger,
 		store:    s,
 		pipeline: p,

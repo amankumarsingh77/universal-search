@@ -7,14 +7,60 @@ import (
 	"universal-search/internal/store"
 )
 
-// mustDropOrder defines the priority order for dropping Must clauses.
-// Index 0 = drop first (most selective / least useful to keep).
-var mustDropOrder = []query.FieldEnum{
-	query.FieldModifiedAt,
-	query.FieldSizeBytes,
-	query.FieldPath,
-	query.FieldFileType,
-	query.FieldExtension,
+// LadderConfig holds the relaxation ladder settings.
+type LadderConfig struct {
+	Enabled   bool
+	DropOrder []query.FieldEnum
+}
+
+// DefaultLadderConfig returns the historical drop order with relaxation enabled.
+func DefaultLadderConfig() LadderConfig {
+	return LadderConfig{
+		Enabled: true,
+		DropOrder: []query.FieldEnum{
+			query.FieldModifiedAt,
+			query.FieldSizeBytes,
+			query.FieldPath,
+			query.FieldFileType,
+			query.FieldExtension,
+		},
+	}
+}
+
+// ParseDropOrder converts a list of raw field strings (from TOML) to a
+// FieldEnum slice, skipping entries that don't match any known field.
+func ParseDropOrder(raw []string) []query.FieldEnum {
+	if len(raw) == 0 {
+		return DefaultLadderConfig().DropOrder
+	}
+	out := make([]query.FieldEnum, 0, len(raw))
+	for _, s := range raw {
+		f := query.FieldEnum(s)
+		if query.KnownFields[f] {
+			out = append(out, f)
+		}
+	}
+	if len(out) == 0 {
+		return DefaultLadderConfig().DropOrder
+	}
+	return out
+}
+
+// Ladder progressively drops Must clauses until results are found.
+type Ladder struct {
+	enabled   bool
+	dropOrder []query.FieldEnum
+}
+
+// NewLadder builds a Ladder from cfg. When cfg.DropOrder is nil the historical
+// default order is used. Enabled is honoured exactly as supplied — callers
+// that want defaults should pass DefaultLadderConfig().
+func NewLadder(cfg LadderConfig) *Ladder {
+	dropOrder := cfg.DropOrder
+	if dropOrder == nil {
+		dropOrder = DefaultLadderConfig().DropOrder
+	}
+	return &Ladder{enabled: cfg.Enabled, dropOrder: dropOrder}
 }
 
 // RelaxationLadder tries to find results by progressively dropping Must clauses
@@ -22,7 +68,7 @@ var mustDropOrder = []query.FieldEnum{
 //
 // Returns: results, human-readable description of the dropped filter (empty if
 // no drop was needed), and any error.
-func RelaxationLadder(
+func (l *Ladder) RelaxationLadder(
 	ctx context.Context,
 	planner *Planner,
 	queryVec []float32,
@@ -30,6 +76,12 @@ func RelaxationLadder(
 	k int,
 ) (results []store.SearchResult, droppedDesc string, err error) {
 	logger := planner.logger
+	if !l.enabled {
+		// Relaxation disabled — run the planner once and return whatever it
+		// finds without dropping any clauses.
+		results, _, _, err = planner.Plan(queryVec, spec, k)
+		return results, "", err
+	}
 	current := copyFilterSpec(spec)
 	logger.Debug("relaxation: starting ladder",
 		"must_clauses", len(spec.Must),
@@ -48,7 +100,7 @@ func RelaxationLadder(
 		}
 
 		// Find the next Must clause to drop (by priority order).
-		idx := findMostSelectiveMustClause(current.Must)
+		idx := findMostSelectiveMustClause(current.Must, l.dropOrder)
 		if idx < 0 {
 			break // all Must clauses dropped, still no results
 		}
@@ -86,9 +138,10 @@ func RelaxationLadder(
 }
 
 // findMostSelectiveMustClause returns the index of the Must clause to drop
-// next, according to mustDropOrder. Returns -1 if no clause can be dropped.
-func findMostSelectiveMustClause(must []query.Clause) int {
-	for _, field := range mustDropOrder {
+// next, according to the supplied drop order. Returns -1 if no clause can be
+// dropped.
+func findMostSelectiveMustClause(must []query.Clause, dropOrder []query.FieldEnum) int {
+	for _, field := range dropOrder {
 		for i, c := range must {
 			if c.Field == field {
 				return i
@@ -122,6 +175,18 @@ func removeMustClause(must []query.Clause, i int) []query.Clause {
 	out = append(out, must[:i]...)
 	out = append(out, must[i+1:]...)
 	return out
+}
+
+// RelaxationLadder is a package-level helper that constructs a default Ladder
+// and delegates. Retained so existing tests compile unchanged.
+func RelaxationLadder(
+	ctx context.Context,
+	planner *Planner,
+	queryVec []float32,
+	spec query.FilterSpec,
+	k int,
+) ([]store.SearchResult, string, error) {
+	return NewLadder(DefaultLadderConfig()).RelaxationLadder(ctx, planner, queryVec, spec, k)
 }
 
 // copyFilterSpec makes a shallow copy of a FilterSpec (slices are copied so

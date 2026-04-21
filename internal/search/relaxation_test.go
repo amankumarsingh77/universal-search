@@ -66,7 +66,7 @@ func (m *mockPlannerStore) CountFiles() (int, error) {
 // TestRelaxation_DropsDateFirst verifies that when a spec has both a date and
 // type Must clause and no results are found, the date clause is dropped first.
 func TestRelaxation_DropsDateFirst(t *testing.T) {
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Store returns results only when modified_at Must clause is absent
 	ms := &mockPlannerStore{
@@ -81,7 +81,7 @@ func TestRelaxation_DropsDateFirst(t *testing.T) {
 	v[0] = 1.0
 	_ = idx.Add("vec-brute", v)
 
-	planner := NewPlanner(ms, idx, DefaultBruteForceThreshold)
+	planner := NewPlanner(ms, idx, DefaultPlannerConfig())
 
 	spec := query.FilterSpec{
 		Must: []query.Clause{
@@ -111,7 +111,7 @@ func TestRelaxation_DropsDateFirst(t *testing.T) {
 
 // TestRelaxation_NeverDropsMustNot verifies that MustNot clauses survive full relaxation.
 func TestRelaxation_NeverDropsMustNot(t *testing.T) {
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Store returns results when Must is empty (all Must dropped)
 	ms := &mockPlannerStore{
@@ -125,7 +125,7 @@ func TestRelaxation_NeverDropsMustNot(t *testing.T) {
 	v[0] = 1.0
 	_ = idx.Add("vec-must-not", v)
 
-	planner := NewPlanner(ms, idx, DefaultBruteForceThreshold)
+	planner := NewPlanner(ms, idx, DefaultPlannerConfig())
 
 	spec := query.FilterSpec{
 		Must: []query.Clause{
@@ -158,7 +158,7 @@ func TestRelaxation_FallsBackToEmptySpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	idx := vectorstore.NewIndex(testLogger)
+	idx := vectorstore.NewDefaultIndex(testLogger)
 
 	// Insert a file with a vector into the real store+index.
 	fileID, err := db.UpsertFile(store.FileRecord{
@@ -177,7 +177,7 @@ func TestRelaxation_FallsBackToEmptySpec(t *testing.T) {
 		t.Fatalf("idx.Add: %v", err)
 	}
 
-	planner := NewPlanner(db, idx, DefaultBruteForceThreshold)
+	planner := NewPlanner(db, idx, DefaultPlannerConfig())
 
 	// Use an impossible future date so no files match the Must clause.
 	spec := query.FilterSpec{

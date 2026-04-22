@@ -180,7 +180,7 @@ func TestParseWithRetry_ExactlyThreeAttempts(t *testing.T) {
 
 	p := buildFakeParser(generate)
 	grammarSpec := FilterSpec{SemanticQuery: "grammar fallback"}
-	spec, err := p.parseWithRetry(context.Background(), query, grammarSpec)
+	result, err := p.parseWithRetry(context.Background(), query, grammarSpec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,8 +188,8 @@ func TestParseWithRetry_ExactlyThreeAttempts(t *testing.T) {
 		t.Errorf("expected exactly 3 calls, got %d", callCount)
 	}
 	// Should return last response (not grammarSpec), even if validator failed.
-	if spec.SemanticQuery != "some query" {
-		t.Errorf("expected last response semantic_query='some query', got %q", spec.SemanticQuery)
+	if result.Spec.SemanticQuery != "some query" {
+		t.Errorf("expected last response semantic_query='some query', got %q", result.Spec.SemanticQuery)
 	}
 }
 
@@ -215,20 +215,22 @@ func TestParseWithRetry_ReasoningDiscarded(t *testing.T) {
 	}
 
 	p := buildFakeParser(generate)
-	spec, err := p.parseWithRetry(context.Background(), "sunset photos", FilterSpec{})
+	result, err := p.parseWithRetry(context.Background(), "sunset photos", FilterSpec{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if spec.SemanticQuery != "sunset photos" {
-		t.Errorf("expected semantic_query='sunset photos', got %q", spec.SemanticQuery)
+	if result.Spec.SemanticQuery != "sunset photos" {
+		t.Errorf("expected semantic_query='sunset photos', got %q", result.Spec.SemanticQuery)
 	}
 	// FilterSpec has no Reasoning field, so just ensure Must was parsed.
-	if len(spec.Must) != 1 {
-		t.Errorf("expected 1 must clause, got %d", len(spec.Must))
+	if len(result.Spec.Must) != 1 {
+		t.Errorf("expected 1 must clause, got %d", len(result.Spec.Must))
 	}
 }
 
-// REQ-014a: transport error on first call → return grammarSpec unchanged, no error.
+// REQ-014a: transport error on first call (maxRetries=0) → OutcomeFailed with grammarSpec unchanged, no error.
+// NOTE: With the new typed ParseResult, the silent attempt-0 grammarSpec fallback is removed (REQ-001).
+// Instead, a non-rate-limit, non-timeout transport error produces OutcomeFailed.
 func TestParseWithRetry_TransportErrorFirstCall(t *testing.T) {
 	generate := func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
 		return nil, errors.New("connection refused")
@@ -236,12 +238,15 @@ func TestParseWithRetry_TransportErrorFirstCall(t *testing.T) {
 
 	grammarSpec := FilterSpec{SemanticQuery: "grammar fallback", Source: SourceGrammar}
 	p := buildFakeParser(generate)
-	spec, err := p.parseWithRetry(context.Background(), "some query", grammarSpec)
+	result, err := p.parseWithRetry(context.Background(), "some query", grammarSpec)
 	if err != nil {
 		t.Fatalf("expected no error on first-call transport error, got: %v", err)
 	}
-	if spec.SemanticQuery != "grammar fallback" {
-		t.Errorf("expected grammarSpec back, got SemanticQuery=%q", spec.SemanticQuery)
+	if result.Spec.SemanticQuery != "grammar fallback" {
+		t.Errorf("expected grammarSpec back, got SemanticQuery=%q", result.Spec.SemanticQuery)
+	}
+	if result.Outcome != OutcomeFailed {
+		t.Errorf("expected OutcomeFailed, got %v", result.Outcome)
 	}
 }
 
@@ -276,13 +281,13 @@ func TestParseWithRetry_TransportErrorMidLoop(t *testing.T) {
 
 	grammarSpec := FilterSpec{SemanticQuery: "grammar fallback"}
 	p := buildFakeParser(generate)
-	spec, err := p.parseWithRetry(context.Background(), query, grammarSpec)
+	result, err := p.parseWithRetry(context.Background(), query, grammarSpec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// First call succeeded with Must non-empty → validator passes → returns immediately.
-	if spec.SemanticQuery != "first good response" {
-		t.Errorf("expected 'first good response', got %q", spec.SemanticQuery)
+	if result.Spec.SemanticQuery != "first good response" {
+		t.Errorf("expected 'first good response', got %q", result.Spec.SemanticQuery)
 	}
 }
 
@@ -312,15 +317,15 @@ func TestParseWithRetry_HappyPath_SingleCall(t *testing.T) {
 	}
 
 	p := buildFakeParser(generate)
-	spec, err := p.parseWithRetry(context.Background(), query, FilterSpec{})
+	result, err := p.parseWithRetry(context.Background(), query, FilterSpec{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if callCount != 1 {
 		t.Errorf("expected exactly 1 call, got %d", callCount)
 	}
-	if len(spec.Must) != 1 {
-		t.Fatalf("expected 1 must clause, got %d", len(spec.Must))
+	if len(result.Spec.Must) != 1 {
+		t.Fatalf("expected 1 must clause, got %d", len(result.Spec.Must))
 	}
 }
 
@@ -439,12 +444,12 @@ func TestLLMParser_MaxRetriesFromConfig_Zero(t *testing.T) {
 	}
 
 	grammar := FilterSpec{SemanticQuery: "grammar fallback"}
-	spec, err := p.parseWithRetry(context.Background(), "find .pdf files", grammar)
+	result, err := p.parseWithRetry(context.Background(), "find .pdf files", grammar)
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}
-	if spec.SemanticQuery != "grammar fallback" {
-		t.Errorf("expected grammar fallback, got %q", spec.SemanticQuery)
+	if result.Spec.SemanticQuery != "grammar fallback" {
+		t.Errorf("expected grammar fallback, got %q", result.Spec.SemanticQuery)
 	}
 	if callCount != 1 {
 		t.Errorf("expected exactly 1 call with MaxRetries=0, got %d", callCount)

@@ -157,6 +157,44 @@ func TestClassify_NilIsPermanent(t *testing.T) {
 	}
 }
 
+// REQ-014: query-level error codes for fail-fast behaviour.
+func TestQueryErrorCodes_AllDefined(t *testing.T) {
+	cases := []struct {
+		err  *Error
+		code string
+	}{
+		{ErrQueryParseFailed, "ERR_QUERY_PARSE_FAILED"},
+		{ErrQueryRateLimited, "ERR_QUERY_RATE_LIMITED"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.code, func(t *testing.T) {
+			if tc.err == nil {
+				t.Fatalf("%s is nil", tc.code)
+			}
+			if tc.err.Code != tc.code {
+				t.Errorf("got code %q, want %q", tc.err.Code, tc.code)
+			}
+			if tc.err.Message == "" {
+				t.Errorf("%s has empty Message", tc.code)
+			}
+		})
+	}
+}
+
+// REQ-014: errors.Is works for query error codes when wrapped via Wrap.
+func TestQueryErrorCodes_ErrorsIsWithWrap(t *testing.T) {
+	wrappedParse := Wrap(ErrQueryParseFailed.Code, "llm call failed", nil)
+	if !errors.Is(wrappedParse, ErrQueryParseFailed) {
+		t.Error("errors.Is(Wrap(ErrQueryParseFailed.Code,...), ErrQueryParseFailed) returned false")
+	}
+
+	wrappedRate := Wrap(ErrQueryRateLimited.Code, "429 from gemini", nil)
+	if !errors.Is(wrappedRate, ErrQueryRateLimited) {
+		t.Error("errors.Is(Wrap(ErrQueryRateLimited.Code,...), ErrQueryRateLimited) returned false")
+	}
+}
+
 // EDGE-013: unknown apperr code defaults to Permanent.
 func TestClassify_UnknownCodeIsPermanent(t *testing.T) {
 	unknown := Wrap("ERR_NOT_REGISTERED", "some future error", nil)

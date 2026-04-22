@@ -53,6 +53,10 @@ var (
 	ErrMigrationFailed = &Error{Code: "ERR_MIGRATION_FAILED", Message: "database migration failed"}
 	ErrRateLimited     = &Error{Code: "ERR_RATE_LIMITED", Message: "rate limited by embedding provider"}
 	ErrInternal        = &Error{Code: "ERR_INTERNAL", Message: "internal error"}
+
+	// Query-understanding error codes (REQ-014).
+	ErrQueryParseFailed = &Error{Code: "ERR_QUERY_PARSE_FAILED", Message: "query understanding failed"}
+	ErrQueryRateLimited = &Error{Code: "ERR_QUERY_RATE_LIMITED", Message: "rate limited while parsing query"}
 )
 
 // Indexing-failure error codes (REQ-001).

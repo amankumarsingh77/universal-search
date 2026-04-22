@@ -13,15 +13,29 @@ type RateLimiter struct {
 	maxReqs    int
 	window     time.Duration
 	pauseUntil time.Time
+	// unpauseCh is closed (and replaced with a fresh channel) whenever the
+	// pause state transitions from "active" to "cleared". Callers waiting for
+	// an unpause event select on this channel together with a deadline timer
+	// and ctx.Done(). The channel itself is never sent to — only closed —
+	// so all concurrent waiters wake simultaneously (broadcast semantics).
+	unpauseCh chan struct{}
 }
 
 // NewRateLimiter creates a rate limiter that allows maxReqs requests per window.
 func NewRateLimiter(maxReqs int, window time.Duration) *RateLimiter {
 	return &RateLimiter{
-		tokens:  make([]time.Time, 0, maxReqs),
-		maxReqs: maxReqs,
-		window:  window,
+		tokens:    make([]time.Time, 0, maxReqs),
+		maxReqs:   maxReqs,
+		window:    window,
+		unpauseCh: make(chan struct{}),
 	}
+}
+
+// broadcastUnpause closes the current unpauseCh and replaces it with a fresh
+// one. Must be called with rl.mu held.
+func (rl *RateLimiter) broadcastUnpause() {
+	close(rl.unpauseCh)
+	rl.unpauseCh = make(chan struct{})
 }
 
 // Allow returns true if the request is within the rate limit, false otherwise.
@@ -48,10 +62,25 @@ func (rl *RateLimiter) Allow() bool {
 	return true
 }
 
-// PauseUntil sets a global pause until t. If t is before the current pauseUntil, it is ignored.
+// PauseUntil sets a global pause until t. If t extends the current pauseUntil,
+// the deadline is updated (waiters stay blocked). If t is in the past (an
+// explicit clear), the pause is cleared and all WaitForUnpause callers are
+// woken via a channel broadcast. If t is before the current pauseUntil and not
+// in the past, it is ignored (later deadline wins).
 func (rl *RateLimiter) PauseUntil(t time.Time) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
+	now := time.Now()
+	if !t.After(now) {
+		// Past or zero: explicit clear — wake all waiters if previously paused.
+		if !rl.pauseUntil.IsZero() && rl.pauseUntil.After(now) {
+			rl.pauseUntil = t
+			rl.broadcastUnpause()
+		} else {
+			rl.pauseUntil = t
+		}
+		return
+	}
 	if t.After(rl.pauseUntil) {
 		rl.pauseUntil = t
 	}
@@ -64,26 +93,51 @@ func (rl *RateLimiter) PausedUntil() time.Time {
 	return rl.pauseUntil
 }
 
-// WaitIfPaused blocks until the global pause expires or ctx is cancelled.
-func (rl *RateLimiter) WaitIfPaused(ctx context.Context) error {
+// WaitForUnpause blocks until the current quota pause has expired (deadline
+// reached) or has been explicitly cleared via PauseUntil(pastTime), then
+// returns nil. Returns immediately with nil if no pause is active. Returns
+// ctx.Err() if the context is cancelled while waiting.
+//
+// If PauseUntil is called to extend an active pause while this goroutine is
+// waiting, the goroutine stays blocked until the new (later) deadline.
+//
+// All concurrent callers are notified simultaneously when the pause clears
+// (broadcast semantics via close-and-replace channel).
+func (rl *RateLimiter) WaitForUnpause(ctx context.Context) error {
 	for {
 		rl.mu.Lock()
 		until := rl.pauseUntil
+		ch := rl.unpauseCh
 		rl.mu.Unlock()
-		if until.IsZero() || time.Now().After(until) {
+
+		if until.IsZero() || !time.Now().Before(until) {
 			return nil
 		}
+
 		remaining := time.Until(until)
-		sleep := remaining
-		if sleep > 100*time.Millisecond {
-			sleep = 100 * time.Millisecond
-		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(sleep):
+		case <-ch:
+			// Pause was cleared or deadline fired via broadcastUnpause;
+			// re-check in case it was replaced by a new (extended) pause.
+		case <-time.After(remaining):
+			// Deadline reached; broadcast to wake any other waiters and
+			// replace the channel so future pauses work correctly.
+			rl.mu.Lock()
+			// Only broadcast if the pauseUntil hasn't changed (another
+			// goroutine may have extended it while we were sleeping).
+			if !rl.pauseUntil.After(time.Now()) {
+				rl.broadcastUnpause()
+			}
+			rl.mu.Unlock()
 		}
 	}
+}
+
+// WaitIfPaused blocks until the global pause expires or ctx is cancelled.
+func (rl *RateLimiter) WaitIfPaused(ctx context.Context) error {
+	return rl.WaitForUnpause(ctx)
 }
 
 // Wait blocks until a request is both un-paused and admitted by the rate

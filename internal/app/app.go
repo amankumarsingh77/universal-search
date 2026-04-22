@@ -67,8 +67,8 @@ type App struct {
 	saveTimer   *time.Timer
 
 	// NL query understanding (Phase 6)
-	parsedQueryCache *query.ParsedQueryCache
-	llmParser        *query.LLMParser
+	parsedQueryCache parsedQueryCacheIface
+	llmParser        llmQueryParser
 
 	// Observability (Phase 8)
 	queryStats *QueryStats

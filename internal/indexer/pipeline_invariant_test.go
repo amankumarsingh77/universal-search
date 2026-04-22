@@ -37,8 +37,9 @@ type scriptedEmbedder struct {
 	outcomes map[string][]bool // filename → ordered outcomes (true=success, false=fail transient)
 }
 
-func (s *scriptedEmbedder) ModelID() string { return "scripted" }
-func (s *scriptedEmbedder) Dimensions() int { return 3 }
+func (s *scriptedEmbedder) ModelID() string        { return "scripted" }
+func (s *scriptedEmbedder) Dimensions() int        { return 3 }
+func (s *scriptedEmbedder) PausedUntil() time.Time { return time.Time{} }
 func (s *scriptedEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return []float32{0, 0, 0}, nil
 }

@@ -109,8 +109,9 @@ type failThenSucceedEmbedder struct {
 	timestamps []time.Time // records when each EmbedBatch was called
 }
 
-func (f *failThenSucceedEmbedder) ModelID() string { return "fail-then-succeed" }
-func (f *failThenSucceedEmbedder) Dimensions() int { return 3 }
+func (f *failThenSucceedEmbedder) ModelID() string        { return "fail-then-succeed" }
+func (f *failThenSucceedEmbedder) Dimensions() int        { return 3 }
+func (f *failThenSucceedEmbedder) PausedUntil() time.Time { return time.Time{} }
 func (f *failThenSucceedEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return []float32{0, 0, 0}, nil
 }
@@ -140,8 +141,9 @@ func (f *failThenSucceedEmbedder) CallTimestamps() []time.Time {
 // alwaysFailEmbedder always returns the given error.
 type alwaysFailEmbedder struct{ err error }
 
-func (a *alwaysFailEmbedder) ModelID() string { return "always-fail" }
-func (a *alwaysFailEmbedder) Dimensions() int { return 3 }
+func (a *alwaysFailEmbedder) ModelID() string        { return "always-fail" }
+func (a *alwaysFailEmbedder) Dimensions() int        { return 3 }
+func (a *alwaysFailEmbedder) PausedUntil() time.Time { return time.Time{} }
 func (a *alwaysFailEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return nil, a.err
 }
@@ -155,8 +157,9 @@ type rateLimitedEmbedder struct {
 	calls int
 }
 
-func (r *rateLimitedEmbedder) ModelID() string { return "rate-limited" }
-func (r *rateLimitedEmbedder) Dimensions() int { return 3 }
+func (r *rateLimitedEmbedder) ModelID() string        { return "rate-limited" }
+func (r *rateLimitedEmbedder) Dimensions() int        { return 3 }
+func (r *rateLimitedEmbedder) PausedUntil() time.Time { return time.Time{} }
 func (r *rateLimitedEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return nil, apperr.ErrRateLimited
 }

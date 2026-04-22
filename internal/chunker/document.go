@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"findo/internal/apperr"
 )
 
 const (
@@ -74,7 +76,7 @@ func ChunkDocument(filePath string) ([]Chunk, error) {
 		return chunkLegacyOffice(filePath)
 	}
 
-	return nil, fmt.Errorf("unsupported document format: %s", ext)
+	return nil, apperr.Wrap(apperr.ErrUnsupportedFormat.Code, "unsupported document format: "+ext, nil)
 }
 
 func chunkModernOffice(filePath, ext string) ([]Chunk, error) {
@@ -92,7 +94,7 @@ func chunkModernOffice(filePath, ext string) ([]Chunk, error) {
 		if len(chunks) > 0 {
 			return chunks, nil
 		}
-		return nil, fmt.Errorf("extract text from %s: %w", ext, err)
+		return nil, apperr.Wrap(apperr.ErrExtractionFailed.Code, "extract text from "+ext+" failed", err)
 	}
 
 	if text != "" {
@@ -101,7 +103,7 @@ func chunkModernOffice(filePath, ext string) ([]Chunk, error) {
 	}
 
 	if len(chunks) == 0 {
-		return nil, fmt.Errorf("no content extracted from %s", filePath)
+		return nil, apperr.Wrap(apperr.ErrExtractionFailed.Code, "no content extracted from "+filepath.Base(filePath), nil)
 	}
 
 	return chunks, nil
@@ -109,10 +111,15 @@ func chunkModernOffice(filePath, ext string) ([]Chunk, error) {
 
 func chunkLegacyOffice(filePath string) ([]Chunk, error) {
 	if !HasLibreOffice() {
-		return nil, fmt.Errorf("libreoffice required for %s — legacy Office formats (.doc, .ppt, .xls, .odt, .odp, .ods, .rtf) need LibreOffice for conversion", filepath.Ext(filePath))
+		return nil, apperr.Wrap(apperr.ErrExtractionFailed.Code,
+			"libreoffice required for "+filepath.Ext(filePath)+" — legacy Office formats need LibreOffice for conversion", nil)
 	}
 
-	return convertAndChunkPDF(filePath)
+	chunks, err := convertAndChunkPDF(filePath)
+	if err != nil {
+		return nil, apperr.Wrap(apperr.ErrExtractionFailed.Code, "legacy office conversion failed", err)
+	}
+	return chunks, nil
 }
 
 func convertAndChunkPDF(filePath string) ([]Chunk, error) {

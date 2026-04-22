@@ -16,11 +16,20 @@ import (
 	"sync/atomic"
 	"time"
 
+	"findo/internal/apperr"
 	"findo/internal/chunker"
 	"findo/internal/embedder"
 	"findo/internal/store"
 	"findo/internal/vectorstore"
 )
+
+// vectorIndexer abstracts the HNSW index operations needed by the pipeline.
+// *vectorstore.Index satisfies this interface.
+type vectorIndexer interface {
+	Add(id string, vec []float32) error
+	Delete(id string) bool
+	Has(id string) bool
+}
 
 // IndexStatus is a point-in-time snapshot of indexing progress and state.
 type IndexStatus struct {
@@ -72,7 +81,7 @@ type OnJobDone func()
 // Pipeline coordinates file indexing across worker goroutines.
 type Pipeline struct {
 	store    *store.Store
-	index    *vectorstore.Index
+	index    vectorIndexer
 	embedder embedder.Embedder
 	thumbDir string
 	logger   *slog.Logger
@@ -367,7 +376,7 @@ fileLoop:
 				p.logger.Warn("file indexing failed", "path", fp, "error", err)
 				p.mu.Lock()
 				p.status.FailedFiles++
-				if isQuotaExhaustedError(err) {
+				if errors.Is(err, apperr.ErrRateLimited) {
 					resumeAt := p.quotaResumeTime()
 					p.status.QuotaPaused = true
 					p.status.QuotaResumeAt = resumeAt.Format(time.RFC3339)
@@ -462,7 +471,7 @@ func (p *Pipeline) indexFile(ctx context.Context, filePath string, force bool) e
 	}
 
 	if err := p.storeChunks(fileID, batchChunks, vectors); err != nil {
-		return fmt.Errorf("one or more chunks failed to embed for %s", filePath)
+		return err
 	}
 
 	return p.commit(fileID, hash)
@@ -474,11 +483,11 @@ func (p *Pipeline) indexFile(ctx context.Context, filePath string, force bool) e
 func (p *Pipeline) checkStale(path string, force bool) (bool, fs.FileInfo, string, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return false, nil, "", err
+		return false, nil, "", apperr.Wrap(apperr.ErrFileUnreadable.Code, "cannot read file", err)
 	}
 	hash, err := hashFile(path)
 	if err != nil {
-		return false, nil, "", err
+		return false, nil, "", apperr.Wrap(apperr.ErrFileUnreadable.Code, "cannot hash file", err)
 	}
 	if !force {
 		existing, err := p.store.GetFileByPath(path)
@@ -558,8 +567,8 @@ func (p *Pipeline) embedBatched(ctx context.Context, path string, fileID int64, 
 	if len(batchInputs) == 0 {
 		p.logger.Debug("file has only empty chunks, committing hash without embedding", "path", path, "chunks", len(chunks))
 		if err := p.store.UpdateContentHash(fileID, hash); err != nil {
-			p.logger.Error("failed to update content hash", "path", path, "error", err)
-			return nil, nil, err
+			p.logger.Error("failed to update content hash", "path", path, "error", err, "code", apperr.ErrStoreWrite.Code)
+			return nil, nil, apperr.Wrap(apperr.ErrStoreWrite.Code, "failed to commit content hash", err)
 		}
 		return nil, nil, nil
 	}
@@ -572,14 +581,16 @@ func (p *Pipeline) embedBatched(ctx context.Context, path string, fileID int64, 
 			p.status.QuotaPaused = true
 			p.status.QuotaResumeAt = resumeAt.Format(time.RFC3339)
 			p.mu.Unlock()
-			p.logger.Warn("quota exhausted, pipeline paused", "resumeAt", resumeAt)
+			p.logger.Warn("quota exhausted, pipeline paused", "resumeAt", resumeAt, "code", apperr.ErrRateLimited.Code)
+			return nil, nil, apperr.Wrap(apperr.ErrRateLimited.Code, "rate limited by embedding provider", err)
 		}
-		p.logger.Warn("batch embedding failed", "path", path, "error", err)
-		return nil, nil, fmt.Errorf("one or more chunks failed to embed for %s", path)
+		p.logger.Warn("batch embedding failed", "path", path, "error", err, "code", apperr.ErrEmbedFailed.Code)
+		return nil, nil, apperr.Wrap(apperr.ErrEmbedFailed.Code, "embedding request failed", err)
 	}
 	if len(vecs) != len(batchChunks) {
-		p.logger.Warn("embedding count mismatch", "path", path, "chunks", len(batchChunks), "vecs", len(vecs))
-		return nil, nil, fmt.Errorf("embedding count mismatch for %s: got %d vecs for %d chunks", path, len(vecs), len(batchChunks))
+		p.logger.Warn("embedding count mismatch", "path", path, "chunks", len(batchChunks), "vecs", len(vecs), "code", apperr.ErrEmbedCountMismatch.Code)
+		return nil, nil, apperr.Wrap(apperr.ErrEmbedCountMismatch.Code,
+			fmt.Sprintf("embedding count mismatch: got %d vecs for %d chunks", len(vecs), len(batchChunks)), nil)
 	}
 	return vecs, batchChunks, nil
 }
@@ -598,8 +609,8 @@ func (p *Pipeline) storeChunks(fileID int64, chunks []chunker.Chunk, vectors [][
 		chunk := chunks[i]
 		vecID := fmt.Sprintf("f%d-c%d", fileID, chunk.Index)
 		if err := p.index.Add(vecID, vec); err != nil {
-			p.logger.Warn("adding vector failed", "fileID", fileID, "chunk", chunk.Index, "error", err)
-			return err
+			p.logger.Warn("adding vector failed", "fileID", fileID, "chunk", chunk.Index, "error", err, "code", apperr.ErrHnswAdd.Code)
+			return apperr.Wrap(apperr.ErrHnswAdd.Code, "failed to add vector to HNSW index", err)
 		}
 		p.store.InsertChunk(store.ChunkRecord{
 			FileID:         fileID,
@@ -630,8 +641,8 @@ func (p *Pipeline) storeChunks(fileID int64, chunks []chunker.Chunk, vectors [][
 // this succeeds the file is considered fully indexed.
 func (p *Pipeline) commit(fileID int64, hash string) error {
 	if err := p.store.UpdateContentHash(fileID, hash); err != nil {
-		p.logger.Error("failed to update content hash", "fileID", fileID, "error", err)
-		return err
+		p.logger.Error("failed to update content hash", "fileID", fileID, "error", err, "code", apperr.ErrStoreWrite.Code)
+		return apperr.Wrap(apperr.ErrStoreWrite.Code, "failed to write content hash", err)
 	}
 	return nil
 }

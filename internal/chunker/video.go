@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"findo/internal/apperr"
 )
 
 const (
@@ -110,12 +112,12 @@ func preprocessChunk(inputPath, outputPath string) error {
 // ChunkVideo splits a video into overlapping 480p/5fps clips ready for embedding.
 func ChunkVideo(filePath string) ([]Chunk, error) {
 	if _, err := os.Stat(filePath); err != nil {
-		return nil, fmt.Errorf("video file not found: %w", err)
+		return nil, apperr.Wrap(apperr.ErrFileUnreadable.Code, "video file not found", err)
 	}
 
 	duration, err := GetVideoDuration(filePath)
 	if err != nil {
-		return nil, err
+		return nil, apperr.Wrap(apperr.ErrExtractionFailed.Code, "failed to get video duration", err)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "vidchunk-*")
@@ -137,7 +139,7 @@ func ChunkVideo(filePath string) ([]Chunk, error) {
 			"-y", chunkPath,
 		}
 		if err := exec.Command("ffmpeg", args...).Run(); err != nil {
-			return nil, fmt.Errorf("ffmpeg chunk %d: %w", r.Index, err)
+			return nil, apperr.Wrap(apperr.ErrExtractionFailed.Code, fmt.Sprintf("ffmpeg chunk %d failed", r.Index), err)
 		}
 
 		still, err := isStillFrame(chunkPath)

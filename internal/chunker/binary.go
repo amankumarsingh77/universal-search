@@ -3,6 +3,8 @@ package chunker
 import (
 	"fmt"
 	"os"
+
+	"findo/internal/apperr"
 )
 
 // maxBinarySize is the maximum file size (50 MB) that ChunkBinary will load
@@ -13,15 +15,16 @@ const maxBinarySize = 50 * 1024 * 1024
 func ChunkBinary(filePath, mimeType string) ([]Chunk, error) {
 	info, err := os.Stat(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("stat binary file: %w", err)
+		return nil, apperr.Wrap(apperr.ErrFileUnreadable.Code, "cannot stat binary file", err)
 	}
 	if info.Size() > maxBinarySize {
-		return nil, fmt.Errorf("file too large (%d bytes, max %d): %s", info.Size(), maxBinarySize, filePath)
+		return nil, apperr.Wrap(apperr.ErrFileTooLarge.Code,
+			fmt.Sprintf("file too large (%d bytes, max %d)", info.Size(), maxBinarySize), nil)
 	}
 
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("read binary file: %w", err)
+		return nil, apperr.Wrap(apperr.ErrFileUnreadable.Code, "cannot read binary file", err)
 	}
 	return []Chunk{{
 		Content:  data,

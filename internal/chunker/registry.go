@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"findo/internal/apperr"
 )
 
 // FileType names the coarse content category of an indexed file.
@@ -163,15 +165,16 @@ func (r *Registry) ChunkFile(filePath string) ([]Chunk, FileType, error) {
 		if ext == ".heic" || ext == ".heif" {
 			info, err := os.Stat(filePath)
 			if err != nil {
-				return nil, ft, fmt.Errorf("stat binary file: %w", err)
+				return nil, ft, apperr.Wrap(apperr.ErrFileUnreadable.Code, "cannot stat HEIC file", err)
 			}
 			if info.Size() > maxBinarySize {
-				return nil, ft, fmt.Errorf("file too large (%d bytes, max %d): %s", info.Size(), maxBinarySize, filePath)
+				return nil, ft, apperr.Wrap(apperr.ErrFileTooLarge.Code,
+					fmt.Sprintf("file too large (%d bytes, max %d)", info.Size(), maxBinarySize), nil)
 			}
 
 			data, err := r.transcodeHEIC(filePath)
 			if err != nil {
-				return nil, ft, err
+				return nil, ft, apperr.Wrap(apperr.ErrExtractionFailed.Code, "HEIC transcoding failed", err)
 			}
 			return []Chunk{{Content: data, MimeType: "image/jpeg", Index: 0}}, ft, nil
 		}

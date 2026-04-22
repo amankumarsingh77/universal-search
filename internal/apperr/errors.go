@@ -22,6 +22,17 @@ func (e *Error) Error() string {
 // Unwrap returns the underlying cause, enabling errors.Is / errors.As traversal.
 func (e *Error) Unwrap() error { return e.Cause }
 
+// Is reports whether e matches the target error by code when both are *Error.
+// This allows errors.Is(wrappedErr, apperr.ErrRateLimited) to return true even
+// when wrappedErr was created with Wrap (different pointer, same code).
+func (e *Error) Is(target error) bool {
+	t, ok := target.(*Error)
+	if !ok {
+		return false
+	}
+	return e.Code == t.Code
+}
+
 // Wrap constructs an Error with the given code, human-readable message, and underlying cause.
 func Wrap(code, message string, cause error) *Error {
 	return &Error{Code: code, Message: message, Cause: cause}

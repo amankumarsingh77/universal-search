@@ -114,6 +114,9 @@ export namespace app {
 	    hasFilters: boolean;
 	    cacheHit: boolean;
 	    isOffline: boolean;
+	    errorCode?: string;
+	    warning?: string;
+	    retryAfterMs?: number;
 
 	    static createFrom(source: any = {}) {
 	        return new ParseQueryResult(source);
@@ -126,6 +129,9 @@ export namespace app {
 	        this.hasFilters = source["hasFilters"];
 	        this.cacheHit = source["cacheHit"];
 	        this.isOffline = source["isOffline"];
+	        this.errorCode = source["errorCode"];
+	        this.warning = source["warning"];
+	        this.retryAfterMs = source["retryAfterMs"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -180,6 +186,7 @@ export namespace app {
 	    results: SearchResultDTO[];
 	    relaxationBanner?: string;
 	    errorCode?: string;
+	    retryAfterMs?: number;
 
 	    static createFrom(source: any = {}) {
 	        return new SearchWithFiltersResult(source);
@@ -190,6 +197,7 @@ export namespace app {
 	        this.results = this.convertValues(source["results"], SearchResultDTO);
 	        this.relaxationBanner = source["relaxationBanner"];
 	        this.errorCode = source["errorCode"];
+	        this.retryAfterMs = source["retryAfterMs"];
 	    }
 
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

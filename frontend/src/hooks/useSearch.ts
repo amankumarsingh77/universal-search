@@ -21,6 +21,8 @@ export function useSearch() {
   const [error, setError] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState(false);
   const [errorCode, setErrorCode] = useState<string>('');
+  const [warning, setWarning] = useState<string>('');
+  const [retryAfterMs, setRetryAfterMs] = useState<number>(0);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const preEmbedRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -31,11 +33,19 @@ export function useSearch() {
   const phaseRef = useRef(nlState.phase);
   phaseRef.current = nlState.phase;
 
+  // Reflects the current errorCode for use inside debounce callbacks
+  const errorCodeRef = useRef('');
+
   // Holds the raw unfiltered results from the last server fetch.
   // Used for client-side filtering when chips arrive without re-querying the server.
   const unfilteredResultsRef = useRef<SearchResultDTO[]>([]);
   // The semanticQuery that was used for the last server fetch embedding.
   const lastSemanticQueryRef = useRef<string>('');
+
+  // Keep errorCodeRef in sync with state
+  useEffect(() => {
+    errorCodeRef.current = errorCode;
+  }, [errorCode]);
 
   const performSearch = useCallback(async (
     q: string,
@@ -52,6 +62,9 @@ export function useSearch() {
       setIsSearching(false);
       return;
     }
+
+    // If a parse error is active, skip the search
+    if (errorCodeRef.current) return;
 
     const { chipTriggered = false } = options;
 
@@ -94,6 +107,7 @@ export function useSearch() {
       // Always update the banner — clear it when absent so stale banners don't persist.
       dispatch({ type: 'BANNER_SET', payload: withFilters?.relaxationBanner ?? '' });
       setErrorCode(withFilters?.errorCode ?? '');
+      setRetryAfterMs(withFilters?.retryAfterMs ?? 0);
       lastSemanticQueryRef.current = semanticQuery;
       unfilteredResultsRef.current = res;
       setResults(res);
@@ -122,6 +136,31 @@ export function useSearch() {
     try {
       const result = await ParseQuery(q);
       if (result) {
+        if (result.errorCode) {
+          // Hard failure from parse: block search, surface error
+          setErrorCode(result.errorCode);
+          setRetryAfterMs(result.retryAfterMs ?? 0);
+          setWarning('');
+          setResults([]);
+          unfilteredResultsRef.current = [];
+          errorCodeRef.current = result.errorCode;
+          return;
+        }
+
+        if (result.warning) {
+          // Soft warning: search continues but we surface the warning
+          setWarning(result.warning);
+          setErrorCode('');
+          setRetryAfterMs(0);
+          errorCodeRef.current = '';
+        } else {
+          // All clear
+          setWarning('');
+          setErrorCode('');
+          setRetryAfterMs(0);
+          errorCodeRef.current = '';
+        }
+
         dispatch({
           type: 'PARSE_COMPLETE',
           payload: { chips: result.chips || [], semanticQuery: result.semanticQuery || '' },
@@ -153,6 +192,12 @@ export function useSearch() {
     unfilteredResultsRef.current = [];
     lastSemanticQueryRef.current = '';
 
+    // Clear error state on new keystroke so stale banners don't persist
+    setErrorCode('');
+    setWarning('');
+    setRetryAfterMs(0);
+    errorCodeRef.current = '';
+
     if (q.trim().length >= 3) {
       preEmbedRef.current = setTimeout(() => {
         PreEmbedQuery(q).catch(() => {});
@@ -171,6 +216,8 @@ export function useSearch() {
 
     // 300ms debounce for search — always a full server call (no chips yet)
     debounceRef.current = setTimeout(() => {
+      // Skip if a parse error has already fired (rare race, but guards it)
+      if (errorCodeRef.current) return;
       performSearch(q, nlState.semanticQuery, nlState.chips, nlState.chipDenyList);
     }, 300);
 
@@ -184,7 +231,7 @@ export function useSearch() {
 
   // Re-run search when chips/denyList change — try client-side filter first
   useEffect(() => {
-    if (nlState.raw.trim()) {
+    if (nlState.raw.trim() && !errorCodeRef.current) {
       performSearch(
         nlState.raw,
         nlState.semanticQuery,
@@ -222,5 +269,7 @@ export function useSearch() {
     forceParseQuery,
     isOffline,
     errorCode,
+    warning,
+    retryAfterMs,
   };
 }

@@ -31,16 +31,22 @@ type vectorIndexer interface {
 	Has(id string) bool
 }
 
+// maxAttempts is the maximum number of indexing attempts per file (including the
+// initial attempt). If a transient error persists beyond this threshold, the failure
+// is recorded as terminal.
+const maxAttempts = 3
+
 // IndexStatus is a point-in-time snapshot of indexing progress and state.
 type IndexStatus struct {
-	TotalFiles    int
-	IndexedFiles  int
-	FailedFiles   int
-	CurrentFile   string
-	IsRunning     bool
-	Paused        bool
-	QuotaPaused   bool
-	QuotaResumeAt string
+	TotalFiles        int
+	IndexedFiles      int
+	FailedFiles       int
+	PendingRetryFiles int
+	CurrentFile       string
+	IsRunning         bool
+	Paused            bool
+	QuotaPaused       bool
+	QuotaResumeAt     string
 }
 
 type jobType int
@@ -73,6 +79,7 @@ type indexJob struct {
 	excludePatterns []string
 	filePath        string
 	force           bool
+	attempts        int // 0 = first attempt (treated as attempt 1 in the worker)
 }
 
 // OnJobDone is a callback invoked after each indexing job completes.
@@ -103,6 +110,10 @@ type Pipeline struct {
 	saveEveryN  int
 
 	chunksSinceLastSave int // protected by mu
+
+	// Failure tracking (Phase 5).
+	registry   *FailureRegistry
+	retryCoord *RetryCoordinator
 }
 
 // NewPipeline builds a Pipeline with the given runtime config. Zero values in
@@ -135,7 +146,19 @@ func NewPipeline(s *store.Store, idx *vectorstore.Index, emb embedder.Embedder, 
 		onJobDone:   onDone,
 		workerCount: cfg.Workers,
 		saveEveryN:  cfg.SaveEveryN,
+		registry:    NewFailureRegistry(10000),
 	}
+	// Wire up the retry coordinator using the embedder's rate limiter when available.
+	var limiter *embedder.RateLimiter
+	if g, ok := emb.(interface{ Limiter() *embedder.RateLimiter }); ok {
+		limiter = g.Limiter()
+	}
+	if limiter == nil {
+		limiter = embedder.NewRateLimiter(55, time.Minute)
+	}
+	p.retryCoord = NewRetryCoordinator(p, limiter)
+	p.retryCoord.Start()
+
 	for i := 0; i < cfg.Workers; i++ {
 		p.workerWg.Add(1)
 		go p.worker()
@@ -177,14 +200,22 @@ func (p *Pipeline) SetTotalFiles(n int) {
 }
 
 // ResetStatus resets indexing counters to zero. Call before starting a new reindex run.
+// Also clears the failure registry and drops all pending retries (REQ-013, REQ-025).
 func (p *Pipeline) ResetStatus() {
-	p.generation.Add(1)
+	currentGen := p.generation.Add(1)
 	p.mu.Lock()
 	p.status.TotalFiles = 0
 	p.status.IndexedFiles = 0
 	p.status.FailedFiles = 0
+	p.status.PendingRetryFiles = 0
 	p.status.CurrentFile = ""
 	p.mu.Unlock()
+	if p.registry != nil {
+		p.registry.Reset()
+	}
+	if p.retryCoord != nil {
+		p.retryCoord.DropAll(currentGen)
+	}
 }
 
 // Pause halts worker processing of new jobs until Resume is called.
@@ -212,6 +243,9 @@ func (p *Pipeline) Stop() {
 	p.logger.Info("pipeline stopping")
 	p.cancel()
 	p.workerWg.Wait()
+	if p.retryCoord != nil {
+		p.retryCoord.Stop()
+	}
 }
 
 // SubmitFolder queues a folder-walking job onto the pipeline.
@@ -225,7 +259,25 @@ func (p *Pipeline) SubmitFolder(folderPath string, excludePatterns []string, for
 }
 
 // SubmitFile queues a single-file indexing job onto the pipeline.
+//
+// EDGE-010: if the file is currently pending retry, the pending retry is cancelled
+// (PendingRetryFiles decremented) and a fresh job is submitted instead. This
+// prevents duplicate attempts for the same path. The retry coordinator will drop
+// the stale job at dequeue (stamp mismatch) and decrement its own pendingCount then.
 func (p *Pipeline) SubmitFile(filePath string) {
+	// Cancel any pending retry for this path (EDGE-010).
+	if p.retryCoord != nil {
+		if p.retryCoord.CancelPath(filePath) {
+			// Decrement PendingRetryFiles immediately so the UI reflects the collapse.
+			// The coordinator will decrement its own pendingCount when it dequeues the
+			// stale job — do NOT decrement pendingCount here to avoid double-decrement.
+			p.mu.Lock()
+			if p.status.PendingRetryFiles > 0 {
+				p.status.PendingRetryFiles--
+			}
+			p.mu.Unlock()
+		}
+	}
 	p.pendingJobs.Add(1)
 	select {
 	case p.jobCh <- indexJob{typ: jobSingleFile, filePath: filePath}:
@@ -259,7 +311,12 @@ func (p *Pipeline) worker() {
 			case jobFolder:
 				p.processFolder(job.folderPath, job.excludePatterns, job.force)
 			case jobSingleFile:
-				p.processSingleFile(job.filePath)
+				if job.attempts > 0 {
+					// Re-submitted by the retry coordinator — do NOT increment TotalFiles.
+					p.processRetryFile(job.filePath, job.attempts)
+				} else {
+					p.processSingleFile(job.filePath, 0)
+				}
 			}
 			remaining := p.pendingJobs.Add(-1)
 			if remaining == 0 {
@@ -369,20 +426,7 @@ fileLoop:
 			p.mu.Unlock()
 
 			if err := p.indexFile(p.ctx, fp, force); err != nil {
-				if errors.Is(err, errStaleGeneration) {
-					// Discarded due to generation change — neither success nor failure.
-					return
-				}
-				p.logger.Warn("file indexing failed", "path", fp, "error", err)
-				p.mu.Lock()
-				p.status.FailedFiles++
-				if errors.Is(err, apperr.ErrRateLimited) {
-					resumeAt := p.quotaResumeTime()
-					p.status.QuotaPaused = true
-					p.status.QuotaResumeAt = resumeAt.Format(time.RFC3339)
-					p.logger.Error("quota exhausted, pausing indexing", "resumeAt", resumeAt)
-				}
-				p.mu.Unlock()
+				p.handleFileError(fp, 1, err)
 			} else {
 				p.mu.Lock()
 				p.status.IndexedFiles++
@@ -408,24 +452,110 @@ fileLoop:
 	)
 }
 
-func (p *Pipeline) processSingleFile(filePath string) {
+func (p *Pipeline) processSingleFile(filePath string, attempts int) {
 	p.mu.Lock()
 	p.status.TotalFiles++
 	p.status.IsRunning = true
 	p.status.CurrentFile = filePath
 	p.mu.Unlock()
 
+	curAttempts := attempts
+	if curAttempts <= 0 {
+		curAttempts = 1
+	}
+
 	if err := p.indexFile(p.ctx, filePath, false); err != nil {
-		if errors.Is(err, errStaleGeneration) {
-			return
-		}
-		p.logger.Warn("single file indexing failed", "path", filePath, "error", err)
-		p.mu.Lock()
-		p.status.FailedFiles++
-		p.mu.Unlock()
+		p.handleFileError(filePath, curAttempts, err)
 	} else {
 		p.mu.Lock()
 		p.status.IndexedFiles++
+		p.mu.Unlock()
+	}
+}
+
+// processRetryFile handles a file that was re-submitted by the retry coordinator.
+// Unlike processSingleFile it does NOT increment TotalFiles (REQ-032).
+func (p *Pipeline) processRetryFile(filePath string, attempts int) {
+	p.mu.Lock()
+	p.status.CurrentFile = filePath
+	p.mu.Unlock()
+
+	curAttempts := attempts
+	if curAttempts <= 0 {
+		curAttempts = 1
+	}
+
+	if err := p.indexFile(p.ctx, filePath, false); err != nil {
+		p.handleFileError(filePath, curAttempts, err)
+	} else {
+		p.mu.Lock()
+		p.status.IndexedFiles++
+		p.mu.Unlock()
+	}
+}
+
+// Registry returns the pipeline's failure registry. Never nil after NewPipeline.
+func (p *Pipeline) Registry() *FailureRegistry {
+	return p.registry
+}
+
+// handleFileError classifies err and either records a terminal failure or
+// schedules a retry. It handles the errStaleGeneration sentinel by discarding
+// without any counter change (EDGE-001).
+//
+// curAttempts is the number of attempts including the one that just failed.
+func (p *Pipeline) handleFileError(filePath string, curAttempts int, err error) {
+	if errors.Is(err, errStaleGeneration) {
+		// Discarded due to generation change — neither success nor failure (EDGE-001).
+		return
+	}
+
+	// Extract apperr.Error; fall back to ERR_INTERNAL/Permanent for raw errors (REQ-004).
+	var appErr *apperr.Error
+	code := apperr.ErrInternal.Code
+	msg := err.Error()
+	if errors.As(err, &appErr) {
+		code = appErr.Code
+		msg = appErr.Message
+	}
+
+	// Handle quota status update alongside classification.
+	if errors.Is(err, apperr.ErrRateLimited) {
+		resumeAt := p.quotaResumeTime()
+		p.mu.Lock()
+		p.status.QuotaPaused = true
+		p.status.QuotaResumeAt = resumeAt.Format(time.RFC3339)
+		p.mu.Unlock()
+		p.logger.Warn("quota exhausted", "path", filePath, "code", code, "resumeAt", resumeAt)
+	}
+
+	cls := apperr.Classify(err)
+	if cls == apperr.ClassPermanent || curAttempts >= maxAttempts {
+		// Terminal failure: record in registry and increment FailedFiles.
+		p.logger.Warn("file indexing failed", "path", filePath, "error", err, "code", code, "attempts", curAttempts)
+		if p.registry != nil {
+			p.registry.Record(filePath, code, msg, curAttempts)
+		}
+		p.mu.Lock()
+		p.status.FailedFiles++
+		p.mu.Unlock()
+		return
+	}
+
+	// Transient failure within retry budget: schedule retry.
+	if p.retryCoord != nil {
+		p.retryCoord.Schedule(filePath, code, msg, curAttempts+1)
+		p.mu.Lock()
+		p.status.PendingRetryFiles++
+		p.mu.Unlock()
+	} else {
+		// No retry coordinator: treat as terminal.
+		p.logger.Warn("file indexing failed (no retry coord)", "path", filePath, "error", err, "code", code)
+		if p.registry != nil {
+			p.registry.Record(filePath, code, msg, curAttempts)
+		}
+		p.mu.Lock()
+		p.status.FailedFiles++
 		p.mu.Unlock()
 	}
 }

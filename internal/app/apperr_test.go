@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"findo/internal/apperr"
 	"findo/internal/config"
@@ -18,8 +19,9 @@ import (
 // failingEmbedder is an Embedder that always fails with a non-retriable error.
 type failingEmbedder struct{ err error }
 
-func (f *failingEmbedder) ModelID() string  { return "test-model" }
-func (f *failingEmbedder) Dimensions() int  { return 768 }
+func (f *failingEmbedder) ModelID() string        { return "test-model" }
+func (f *failingEmbedder) Dimensions() int        { return 768 }
+func (f *failingEmbedder) PausedUntil() time.Time { return time.Time{} }
 func (f *failingEmbedder) EmbedBatch(_ context.Context, inputs []embedder.ChunkInput) ([][]float32, error) {
 	return nil, f.err
 }

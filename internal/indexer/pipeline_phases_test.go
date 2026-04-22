@@ -235,8 +235,9 @@ type genBumpingEmbedder struct {
 	p *Pipeline
 }
 
-func (g *genBumpingEmbedder) ModelID() string { return "mock" }
-func (g *genBumpingEmbedder) Dimensions() int { return 3 }
+func (g *genBumpingEmbedder) ModelID() string        { return "mock" }
+func (g *genBumpingEmbedder) Dimensions() int        { return 3 }
+func (g *genBumpingEmbedder) PausedUntil() time.Time { return time.Time{} }
 func (g *genBumpingEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return []float32{0, 0, 0}, nil
 }

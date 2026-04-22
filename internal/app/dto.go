@@ -25,22 +25,30 @@ type ChipDTO struct {
 }
 
 // ParseQueryResult is the result of parsing a query into structured filters.
+// ErrorCode and Warning are set when LLM query understanding fails non-fatally
+// (REQ-014); RetryAfterMs is populated on ERR_QUERY_RATE_LIMITED (REQ-021).
 type ParseQueryResult struct {
 	Chips         []ChipDTO `json:"chips"`
 	SemanticQuery string    `json:"semanticQuery"`
 	HasFilters    bool      `json:"hasFilters"`
 	CacheHit      bool      `json:"cacheHit"`
 	IsOffline     bool      `json:"isOffline"`
+	ErrorCode     string    `json:"errorCode,omitempty"`
+	Warning       string    `json:"warning,omitempty"`
+	RetryAfterMs  int64     `json:"retryAfterMs,omitempty"`
 }
 
 // SearchWithFiltersResult wraps search results with an optional relaxation banner.
 // ErrorCode is set to a stable apperr code (e.g. "ERR_MODEL_MISMATCH") when the
 // backend detected a non-fatal condition the UI should surface; in that case
 // Results is empty and the method returns a nil Go error.
+// RetryAfterMs is populated when ErrorCode is ERR_QUERY_RATE_LIMITED so the
+// frontend can show a countdown and retry automatically (REQ-021).
 type SearchWithFiltersResult struct {
 	Results          []SearchResultDTO `json:"results"`
 	RelaxationBanner string            `json:"relaxationBanner,omitempty"`
 	ErrorCode        string            `json:"errorCode,omitempty"`
+	RetryAfterMs     int64             `json:"retryAfterMs,omitempty"`
 }
 
 // FailureGroupDTO aggregates per-code failure counts for the frontend.

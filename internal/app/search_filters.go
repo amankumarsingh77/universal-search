@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"findo/internal/apperr"
@@ -97,8 +96,20 @@ func (a *App) SearchWithFilters(raw string, semanticQuery string, denyList []str
 	a.logger.Debug("search_with_filters: embedding query", "query_text", queryText)
 	queryVec, err := a.getQueryVector(queryText)
 	if err != nil {
-		a.logger.Warn("search_with_filters: embedding failed, falling back to filename search", "error", err)
-		return a.searchFilenameOnly(queryText)
+		a.logger.Warn("search_with_filters: embedding failed", "error", err)
+		if errors.Is(err, apperr.ErrRateLimited) {
+			var retryAfterMs int64
+			if !emb.PausedUntil().IsZero() {
+				if remaining := time.Until(emb.PausedUntil()).Milliseconds(); remaining > 0 {
+					retryAfterMs = remaining
+				}
+			}
+			return SearchWithFiltersResult{
+				ErrorCode:    apperr.ErrRateLimited.Code,
+				RetryAfterMs: retryAfterMs,
+			}, nil
+		}
+		return SearchWithFiltersResult{ErrorCode: apperr.ErrEmbedFailed.Code}, nil
 	}
 	a.logger.Debug("search_with_filters: query embedded, running search engine",
 		"must", len(mergedSpec.Must),
@@ -106,17 +117,12 @@ func (a *App) SearchWithFilters(raw string, semanticQuery string, denyList []str
 		"should", len(mergedSpec.Should),
 	)
 
-	// Run SearchWithSpec; on network errors fall back to filename search.
+	// Run SearchWithSpec; surface typed errors to the caller.
 	searchResult, err := a.engine.SearchWithSpec(queryVec, mergedSpec, raw, 20)
 	if err != nil {
 		if errors.Is(err, apperr.ErrModelMismatch) {
 			a.logger.Warn("search: model mismatch, prompting user to reindex")
 			return SearchWithFiltersResult{ErrorCode: apperr.ErrModelMismatch.Code}, nil
-		}
-		if strings.Contains(strings.ToLower(err.Error()), "network") ||
-			strings.Contains(strings.ToLower(err.Error()), "embed") {
-			a.logger.Warn("vector search failed, falling back to filename search", "error", err)
-			return a.searchFilenameOnly(queryText)
 		}
 		return SearchWithFiltersResult{}, err
 	}

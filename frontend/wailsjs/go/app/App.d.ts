@@ -23,6 +23,8 @@ export function GetHotkeyString():Promise<string>;
 
 export function GetIgnoredFolders():Promise<Array<string>>;
 
+export function GetIndexFailures():Promise<Array<app.IndexFailureDTO>>;
+
 export function GetIndexStatus():Promise<app.IndexStatusDTO>;
 
 export function GetNLQueryEnabled():Promise<boolean>;

@@ -43,14 +43,33 @@ type SearchWithFiltersResult struct {
 	ErrorCode        string            `json:"errorCode,omitempty"`
 }
 
+// FailureGroupDTO aggregates per-code failure counts for the frontend.
+type FailureGroupDTO struct {
+	Code        string   `json:"code"`
+	Label       string   `json:"label"`
+	Count       int      `json:"count"`
+	SampleFiles []string `json:"sampleFiles"`
+}
+
+// IndexFailureDTO is a single per-file failure entry sent to the frontend.
+type IndexFailureDTO struct {
+	Path         string `json:"path"`
+	Code         string `json:"code"`
+	Message      string `json:"message"`
+	Attempts     int    `json:"attempts"`
+	LastFailedAt int64  `json:"lastFailedAt"` // unix seconds
+}
+
 // IndexStatusDTO is the JSON-serializable indexing status sent to the frontend.
 type IndexStatusDTO struct {
-	TotalFiles    int    `json:"totalFiles"`
-	IndexedFiles  int    `json:"indexedFiles"`
-	FailedFiles   int    `json:"failedFiles"`
-	CurrentFile   string `json:"currentFile"`
-	IsRunning     bool   `json:"isRunning"`
-	Paused        bool   `json:"paused"`
-	QuotaPaused   bool   `json:"quotaPaused"`
-	QuotaResumeAt string `json:"quotaResumeAt"`
+	TotalFiles        int               `json:"totalFiles"`
+	IndexedFiles      int               `json:"indexedFiles"`
+	FailedFiles       int               `json:"failedFiles"`
+	CurrentFile       string            `json:"currentFile"`
+	IsRunning         bool              `json:"isRunning"`
+	Paused            bool              `json:"paused"`
+	QuotaPaused       bool              `json:"quotaPaused"`
+	QuotaResumeAt     string            `json:"quotaResumeAt"`
+	PendingRetryFiles int               `json:"pendingRetryFiles"`
+	FailedFileGroups  []FailureGroupDTO `json:"failedFileGroups"`
 }

@@ -12,19 +12,58 @@ import (
 // GetIndexStatus returns the current indexing pipeline status.
 func (a *App) GetIndexStatus() IndexStatusDTO {
 	if a.pipeline == nil {
-		return IndexStatusDTO{}
+		return IndexStatusDTO{FailedFileGroups: []FailureGroupDTO{}}
 	}
 	s := a.pipeline.Status()
-	return IndexStatusDTO{
-		TotalFiles:    s.TotalFiles,
-		IndexedFiles:  s.IndexedFiles,
-		FailedFiles:   s.FailedFiles,
-		CurrentFile:   s.CurrentFile,
-		IsRunning:     s.IsRunning,
-		Paused:        s.Paused,
-		QuotaPaused:   s.QuotaPaused,
-		QuotaResumeAt: s.QuotaResumeAt,
+
+	// Build top-5 failure groups from the registry (already sorted desc by count).
+	rawGroups := a.pipeline.Registry().Groups()
+	const maxGroups = 5
+	if len(rawGroups) > maxGroups {
+		rawGroups = rawGroups[:maxGroups]
 	}
+	groups := make([]FailureGroupDTO, 0, len(rawGroups))
+	for _, g := range rawGroups {
+		groups = append(groups, FailureGroupDTO{
+			Code:        g.Code,
+			Label:       g.Label,
+			Count:       g.Count,
+			SampleFiles: g.SampleFiles,
+		})
+	}
+
+	return IndexStatusDTO{
+		TotalFiles:        s.TotalFiles,
+		IndexedFiles:      s.IndexedFiles,
+		FailedFiles:       s.FailedFiles,
+		CurrentFile:       s.CurrentFile,
+		IsRunning:         s.IsRunning,
+		Paused:            s.Paused,
+		QuotaPaused:       s.QuotaPaused,
+		QuotaResumeAt:     s.QuotaResumeAt,
+		PendingRetryFiles: s.PendingRetryFiles,
+		FailedFileGroups:  groups,
+	}
+}
+
+// GetIndexFailures returns the full snapshot of per-file terminal failures.
+// Performs no I/O — reads only from the in-memory failure registry (REQ-044).
+func (a *App) GetIndexFailures() []IndexFailureDTO {
+	if a.pipeline == nil {
+		return []IndexFailureDTO{}
+	}
+	snap := a.pipeline.Registry().Snapshot()
+	out := make([]IndexFailureDTO, 0, len(snap))
+	for _, e := range snap {
+		out = append(out, IndexFailureDTO{
+			Path:         e.Path,
+			Code:         e.Code,
+			Message:      e.Message,
+			Attempts:     e.Attempts,
+			LastFailedAt: e.LastFailedAt.Unix(),
+		})
+	}
+	return out
 }
 
 // PauseIndexing pauses the indexing pipeline.

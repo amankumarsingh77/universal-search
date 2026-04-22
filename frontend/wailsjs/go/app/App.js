@@ -42,6 +42,10 @@ export function GetIgnoredFolders() {
   return window['go']['app']['App']['GetIgnoredFolders']();
 }
 
+export function GetIndexFailures() {
+  return window['go']['app']['App']['GetIndexFailures']();
+}
+
 export function GetIndexStatus() {
   return window['go']['app']['App']['GetIndexStatus']();
 }

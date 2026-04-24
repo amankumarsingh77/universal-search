@@ -1,0 +1,15 @@
+{
+  "overall": 0.9149999999999996,
+  "per_category": {
+    "combo": 1,
+    "date": 0.8131868131868135,
+    "extension": 1,
+    "kind": 1,
+    "negation": 1,
+    "path": 1,
+    "semantic_only": 1,
+    "size": 1
+  },
+  "generated_at": "2026-04-24T17:17:09Z",
+  "notes": "post-iteration: grammar embedded-date scanner + expanded hand rules + nowFunc TZ-independence + 10 stub fixes"
+}

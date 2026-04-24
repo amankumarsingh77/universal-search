@@ -699,26 +699,29 @@ func (s *Store) GetVectorBlobs(fileIDs []int64) (map[int64][][]float32, error) {
 	return result, rows.Err()
 }
 
-// UpsertParsedQueryCache stores a parsed query spec, keyed by normalized query text.
-func (s *Store) UpsertParsedQueryCache(normalizedQuery, specJSON string) error {
+// UpsertParsedQueryCache stores a parsed query spec, keyed by normalized query text
+// and schema version. The primary key is (query_text_normalized), so inserting a row
+// with the same key but a different schema_version replaces the prior entry.
+func (s *Store) UpsertParsedQueryCache(normalizedQuery, specJSON string, schemaVersion int) error {
 	now := time.Now().Unix()
 	_, err := s.db.Exec(`
-		INSERT OR REPLACE INTO parsed_query_cache (query_text_normalized, spec_json, created_at, last_used_at)
-		VALUES (?, ?, ?, ?)
-	`, normalizedQuery, specJSON, now, now)
+		INSERT OR REPLACE INTO parsed_query_cache (query_text_normalized, spec_json, schema_version, created_at, last_used_at)
+		VALUES (?, ?, ?, ?, ?)
+	`, normalizedQuery, specJSON, schemaVersion, now, now)
 	if err != nil {
 		return fmt.Errorf("upsert parsed query cache: %w", err)
 	}
 	return nil
 }
 
-// GetParsedQueryCache returns the cached spec JSON for normalizedQuery.
-// Returns "", nil on a cache miss. Updates last_used_at on a hit.
-func (s *Store) GetParsedQueryCache(normalizedQuery string) (string, error) {
+// GetParsedQueryCache returns the cached spec JSON for normalizedQuery at the given
+// schema version. Returns "", nil on a cache miss or version mismatch. Updates
+// last_used_at on a hit.
+func (s *Store) GetParsedQueryCache(normalizedQuery string, schemaVersion int) (string, error) {
 	var specJSON string
 	err := s.db.QueryRow(
-		`SELECT spec_json FROM parsed_query_cache WHERE query_text_normalized = ?`,
-		normalizedQuery,
+		`SELECT spec_json FROM parsed_query_cache WHERE query_text_normalized = ? AND schema_version = ?`,
+		normalizedQuery, schemaVersion,
 	).Scan(&specJSON)
 	if err == sql.ErrNoRows {
 		return "", nil
@@ -729,8 +732,8 @@ func (s *Store) GetParsedQueryCache(normalizedQuery string) (string, error) {
 
 	// Update last_used_at on hit.
 	_, _ = s.db.Exec(
-		`UPDATE parsed_query_cache SET last_used_at = ? WHERE query_text_normalized = ?`,
-		time.Now().Unix(), normalizedQuery,
+		`UPDATE parsed_query_cache SET last_used_at = ? WHERE query_text_normalized = ? AND schema_version = ?`,
+		time.Now().Unix(), normalizedQuery, schemaVersion,
 	)
 	return specJSON, nil
 }

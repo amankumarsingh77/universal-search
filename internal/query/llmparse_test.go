@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -9,6 +10,16 @@ import (
 
 	"google.golang.org/genai"
 )
+
+// mustMarshal encodes v to a JSON string and panics on error.
+// Used in tests to build Text-based LLM response fixtures.
+func mustMarshal(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic("mustMarshal: " + err.Error())
+	}
+	return string(b)
+}
 
 // --- validateLLMResponse tests ---
 
@@ -62,42 +73,9 @@ func TestValidateLLMResponse_FreeTextQuery(t *testing.T) {
 	}
 }
 
-// --- decodeToolCallResponse tests ---
+// --- decodeJSONResponse tests ---
 
-func TestDecodeToolCallResponse_NilResponse(t *testing.T) {
-	_, err := decodeToolCallResponse(nil)
-	if err == nil {
-		t.Fatal("expected error for nil response")
-	}
-}
-
-func TestDecodeToolCallResponse_NoCandidates(t *testing.T) {
-	resp := &genai.GenerateContentResponse{}
-	_, err := decodeToolCallResponse(resp)
-	if err == nil {
-		t.Fatal("expected error for response with no candidates")
-	}
-}
-
-func TestDecodeToolCallResponse_CandidateNoFunctionCall(t *testing.T) {
-	resp := &genai.GenerateContentResponse{
-		Candidates: []*genai.Candidate{
-			{
-				Content: &genai.Content{
-					Parts: []*genai.Part{
-						{Text: "some text"},
-					},
-				},
-			},
-		},
-	}
-	_, err := decodeToolCallResponse(resp)
-	if err == nil {
-		t.Fatal("expected error when no FunctionCall in parts")
-	}
-}
-
-func TestDecodeToolCallResponse_ValidFunctionCall(t *testing.T) {
+func TestDecodeJSONResponseHappy(t *testing.T) {
 	args := map[string]any{
 		"semantic_query": "photos",
 		"reasoning":      "",
@@ -116,13 +94,13 @@ func TestDecodeToolCallResponse_ValidFunctionCall(t *testing.T) {
 			{
 				Content: &genai.Content{
 					Parts: []*genai.Part{
-						{FunctionCall: &genai.FunctionCall{Name: "emit_filters", Args: args}},
+						{Text: mustMarshal(args)},
 					},
 				},
 			},
 		},
 	}
-	spec, err := decodeToolCallResponse(resp)
+	spec, err := decodeJSONResponse(resp)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -134,6 +112,92 @@ func TestDecodeToolCallResponse_ValidFunctionCall(t *testing.T) {
 	}
 	if spec.Must[0].Field != FieldFileType {
 		t.Errorf("expected field file_type, got %q", spec.Must[0].Field)
+	}
+}
+
+func TestDecodeJSONResponseMalformed(t *testing.T) {
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{
+			{
+				Content: &genai.Content{
+					Parts: []*genai.Part{
+						{Text: "not valid json{{{"},
+					},
+				},
+			},
+		},
+	}
+	_, err := decodeJSONResponse(resp)
+	if err == nil {
+		t.Fatal("expected error for malformed JSON text")
+	}
+}
+
+func TestDecodeJSONResponseUnknownField(t *testing.T) {
+	// Unknown field value in clause → clause dropped by llmClauseToClause.
+	args := map[string]any{
+		"semantic_query": "some query",
+		"reasoning":      "",
+		"must": []any{
+			map[string]any{
+				"field": "unknown_field_xyz",
+				"op":    "eq",
+				"value": "foo",
+			},
+		},
+		"must_not": []any{},
+		"should":   []any{},
+	}
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{
+			{
+				Content: &genai.Content{
+					Parts: []*genai.Part{
+						{Text: mustMarshal(args)},
+					},
+				},
+			},
+		},
+	}
+	spec, err := decodeJSONResponse(resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(spec.Must) != 0 {
+		t.Errorf("expected clause dropped for unknown field, got %d must clauses", len(spec.Must))
+	}
+}
+
+func TestDecodeJSONResponse_NilResponse(t *testing.T) {
+	_, err := decodeJSONResponse(nil)
+	if err == nil {
+		t.Fatal("expected error for nil response")
+	}
+}
+
+func TestDecodeJSONResponse_NoCandidates(t *testing.T) {
+	resp := &genai.GenerateContentResponse{}
+	_, err := decodeJSONResponse(resp)
+	if err == nil {
+		t.Fatal("expected error for response with no candidates")
+	}
+}
+
+func TestDecodeJSONResponse_EmptyTextPart(t *testing.T) {
+	resp := &genai.GenerateContentResponse{
+		Candidates: []*genai.Candidate{
+			{
+				Content: &genai.Content{
+					Parts: []*genai.Part{
+						{Text: ""},
+					},
+				},
+			},
+		},
+	}
+	_, err := decodeJSONResponse(resp)
+	if err == nil {
+		t.Fatal("expected error for empty text part")
 	}
 }
 
@@ -170,7 +234,7 @@ func TestParseWithRetry_ExactlyThreeAttempts(t *testing.T) {
 				{
 					Content: &genai.Content{
 						Parts: []*genai.Part{
-							{FunctionCall: &genai.FunctionCall{Name: "emit_filters", Args: args}},
+							{Text: mustMarshal(args)},
 						},
 					},
 				},
@@ -208,7 +272,7 @@ func TestParseWithRetry_ReasoningDiscarded(t *testing.T) {
 		return &genai.GenerateContentResponse{
 			Candidates: []*genai.Candidate{
 				{Content: &genai.Content{Parts: []*genai.Part{
-					{FunctionCall: &genai.FunctionCall{Name: "emit_filters", Args: args}},
+					{Text: mustMarshal(args)},
 				}}},
 			},
 		}, nil
@@ -277,7 +341,7 @@ func TestParseWithRetry_TransportErrorMidLoop(t *testing.T) {
 			return &genai.GenerateContentResponse{
 				Candidates: []*genai.Candidate{
 					{Content: &genai.Content{Parts: []*genai.Part{
-						{FunctionCall: &genai.FunctionCall{Name: "emit_filters", Args: goodArgs}},
+						{Text: mustMarshal(goodArgs)},
 					}}},
 				},
 			}, nil
@@ -316,7 +380,7 @@ func TestParseWithRetry_HappyPath_SingleCall(t *testing.T) {
 		return &genai.GenerateContentResponse{
 			Candidates: []*genai.Candidate{
 				{Content: &genai.Content{Parts: []*genai.Part{
-					{FunctionCall: &genai.FunctionCall{Name: "emit_filters", Args: args}},
+					{Text: mustMarshal(args)},
 				}}},
 			},
 		}, nil
@@ -357,16 +421,13 @@ func TestParseWithRetry_ContentsAlternateRoles(t *testing.T) {
 					Content: &genai.Content{
 						Role: "model",
 						Parts: []*genai.Part{
-							{FunctionCall: &genai.FunctionCall{
-								Name: "emit_filters",
-								Args: map[string]any{
-									"reasoning":      "empty",
-									"semantic_query": "",
-									"must":           []any{},
-									"must_not":       []any{},
-									"should":         []any{},
-								},
-							}},
+							{Text: mustMarshal(map[string]any{
+								"reasoning":      "empty",
+								"semantic_query": "",
+								"must":           []any{},
+								"must_not":       []any{},
+								"should":         []any{},
+							})},
 						},
 					},
 				},
@@ -462,6 +523,43 @@ func TestLLMParser_MaxRetriesFromConfig_Zero(t *testing.T) {
 	}
 	if callCount != 1 {
 		t.Errorf("expected exactly 1 call with MaxRetries=0, got %d", callCount)
+	}
+}
+
+// TestParseWithRetry_AllDecodesFail_ReturnsGrammarSpec asserts that when every
+// attempt returns non-JSON text (all decode errors), the returned spec equals
+// the grammarSpec passed in, not the zero-value FilterSpec (REQ-004).
+func TestParseWithRetry_AllDecodesFail_ReturnsGrammarSpec(t *testing.T) {
+	callCount := 0
+	generate := func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+		callCount++
+		return &genai.GenerateContentResponse{
+			Candidates: []*genai.Candidate{
+				{Content: &genai.Content{Parts: []*genai.Part{
+					{Text: "this is not valid json !!!"},
+				}}},
+			},
+		}, nil
+	}
+
+	grammarSpec := FilterSpec{SemanticQuery: "grammar fallback", Source: SourceGrammar}
+	p := buildFakeParser(generate)
+	result, err := p.parseWithRetry(context.Background(), "some query", grammarSpec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// All maxRetries+1 calls return bad JSON; grammarSpec must come back.
+	if result.Spec.SemanticQuery != "grammar fallback" {
+		t.Errorf("expected grammarSpec SemanticQuery='grammar fallback', got %q", result.Spec.SemanticQuery)
+	}
+	if result.Spec.Source != SourceGrammar {
+		t.Errorf("expected grammarSpec Source=%v, got %v", SourceGrammar, result.Spec.Source)
+	}
+	if result.Outcome != OutcomeOK {
+		t.Errorf("expected OutcomeOK, got %v", result.Outcome)
+	}
+	if callCount != p.maxRetries+1 {
+		t.Errorf("expected %d calls, got %d", p.maxRetries+1, callCount)
 	}
 }
 

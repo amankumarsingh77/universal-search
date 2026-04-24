@@ -5,12 +5,12 @@ go 1.26.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/TFMV/hnsw v0.4.0
-	github.com/araddon/dateparse v0.0.0-20210429162001-6b43995a97de
 	github.com/energye/systray v1.0.3
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/ijt/go-anytime v1.9.2
 	github.com/joho/godotenv v1.5.1
+	github.com/markusmobius/go-dateparser v1.2.4
 	github.com/ncruces/go-sqlite3 v0.33.0
-	github.com/olebedev/when v1.1.0
 	github.com/wailsapp/wails/v2 v2.12.0
 	github.com/xuri/excelize/v2 v2.10.1
 	golang.design/x/hotkey v0.4.1
@@ -26,7 +26,6 @@ require (
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.5.2 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
-	github.com/AlekSi/pointer v1.0.0 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
 	github.com/chewxy/math32 v1.10.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
@@ -37,6 +36,10 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/hablullah/go-hijri v1.0.2 // indirect
+	github.com/hablullah/go-juliandays v1.0.0 // indirect
+	github.com/ijt/goparsify v0.0.0-20221203142333-3a5276334b8d // indirect
+	github.com/jalaali/go-jalaali v0.0.0-20210801064154-80525e88d958 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/labstack/echo/v4 v4.13.3 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
@@ -44,6 +47,7 @@ require (
 	github.com/leaanthony/gosod v1.0.4 // indirect
 	github.com/leaanthony/slicer v1.6.0 // indirect
 	github.com/leaanthony/u v1.1.1 // indirect
+	github.com/magefile/mage v1.14.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-sqlite3-wasm v1.0.1-0.20260321101821-261d0f98d39c // indirect
@@ -54,6 +58,7 @@ require (
 	github.com/richardlehane/msoleps v1.0.6 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/samber/lo v1.49.1 // indirect
+	github.com/tetratelabs/wazero v1.2.1 // indirect
 	github.com/tiendc/go-deepcopy v1.7.2 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
@@ -62,6 +67,7 @@ require (
 	github.com/viterin/vek v0.4.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
+	github.com/wasilibs/go-re2 v1.3.0 // indirect
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	go.opencensus.io v0.24.0 // indirect

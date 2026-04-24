@@ -1076,12 +1076,12 @@ func TestUpsertParsedQueryCache_RoundTrip(t *testing.T) {
 	defer s.Close()
 
 	specJSON := `{"semantic_query":"find images","must":[{"field":"file_type","op":"eq","value":"image"}]}`
-	err = s.UpsertParsedQueryCache("find images", specJSON)
+	err = s.UpsertParsedQueryCache("find images", specJSON, 2)
 	if err != nil {
 		t.Fatalf("UpsertParsedQueryCache failed: %v", err)
 	}
 
-	got, err := s.GetParsedQueryCache("find images")
+	got, err := s.GetParsedQueryCache("find images", 2)
 	if err != nil {
 		t.Fatalf("GetParsedQueryCache failed: %v", err)
 	}
@@ -1097,7 +1097,7 @@ func TestUpsertParsedQueryCache_Miss_ReturnsEmpty(t *testing.T) {
 	}
 	defer s.Close()
 
-	got, err := s.GetParsedQueryCache("nonexistent query")
+	got, err := s.GetParsedQueryCache("nonexistent query", 2)
 	if err != nil {
 		t.Fatalf("GetParsedQueryCache miss should return nil error, got: %v", err)
 	}
@@ -1125,7 +1125,7 @@ func TestEvictOldParsedQueryCache_LeavesRecent(t *testing.T) {
 
 	// Seed 5 recent entries
 	for i := 0; i < 5; i++ {
-		err := s.UpsertParsedQueryCache(fmt.Sprintf("recent query %d", i), `{}`)
+		err := s.UpsertParsedQueryCache(fmt.Sprintf("recent query %d", i), `{}`, 2)
 		if err != nil {
 			t.Fatalf("UpsertParsedQueryCache recent %d failed: %v", i, err)
 		}

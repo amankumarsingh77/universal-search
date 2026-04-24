@@ -6,142 +6,46 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/araddon/dateparse"
-	"github.com/olebedev/when"
-	"github.com/olebedev/when/rules/common"
-	"github.com/olebedev/when/rules/en"
 )
 
-// whenParser is the English + common rules NLP parser, initialised once.
-var whenParser *when.Parser
+// dateParser is the interface every stage in the chain must implement.
+type dateParser interface {
+	Parse(s string, now time.Time) (after, before time.Time, ok bool)
+}
 
-func init() {
-	whenParser = when.New(nil)
-	whenParser.Add(en.All...)
-	whenParser.Add(common.All...)
+// dateChain is the ordered fallback chain. Declared as var so tests can inject
+// alternative parsers to verify ordering or exercise specific stages in isolation.
+var dateChain = []dateParser{
+	handRulesParser{},
+	anytimeParser{},
+	dateParserParser{},
 }
 
 // NormalizeDate parses a date string to (after, before time.Time, ok bool).
-// Tries olebedev/when first for relative phrases, then araddon/dateparse for absolutes.
-// "yesterday" → full calendar day (00:00 to 23:59:59).
-// "last week" → 7 days ago 00:00 to now.
-// Returns (zero, zero, false) if unparseable.
+// The chain is:
+//  1. handRulesParser — exact phrases and regex rules with deterministic outputs.
+//  2. anytimeParser — go-anytime with DefaultToPast for relative/fuzzy dates.
+//  3. dateParserParser — go-dateparser with PreferredDateSource=Past for absolute dates.
+//
+// Returns (zero, zero, false) if no stage could parse the input.
 func NormalizeDate(s string, now time.Time) (after, before time.Time, ok bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return
 	}
-
 	lower := strings.ToLower(s)
-
-	// -- Special-case well-known relative phrases before delegating --
-
-	switch lower {
-	case "yesterday":
-		yest := now.AddDate(0, 0, -1)
-		start := time.Date(yest.Year(), yest.Month(), yest.Day(), 0, 0, 0, 0, now.Location())
-		end := time.Date(yest.Year(), yest.Month(), yest.Day(), 23, 59, 59, 0, now.Location())
-		return start, end, true
-
-	case "today":
-		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		return start, now, true
-
-	case "last week":
-		start := now.AddDate(0, 0, -7)
-		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, now.Location())
-		return start, now, true
-
-	case "last month":
-		start := now.AddDate(0, -1, 0)
-		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, now.Location())
-		return start, now, true
-
-	case "last year":
-		start := now.AddDate(-1, 0, 0)
-		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, now.Location())
-		return start, now, true
-	}
-
-	// "past N days/weeks/months"
-	if t, b, parsed := parsePastN(lower, now); parsed {
-		return t, b, true
-	}
-
-	// -- Try araddon/dateparse first for structured absolute date formats --
-	// Only attempt if the string looks like a structured date (contains digit+separator).
-	if looksLikeStructuredDate(s) {
-		if t, err := dateparse.ParseAny(s); err == nil {
-			start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, now.Location())
-			end := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, now.Location())
-			return start, end, true
+	for _, p := range dateChain {
+		if a, b, k := p.Parse(lower, now); k {
+			return a, b, true
 		}
 	}
-
-	// -- Try olebedev/when (NLP relative dates) --
-	if result, err := whenParser.Parse(s, now); err == nil && result != nil {
-		t := result.Time
-		// Normalize to start-of-day for consistency with other branches.
-		start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, now.Location())
-		end := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, now.Location())
-		return start, end, true
-	}
-
-	// -- Try araddon/dateparse for any remaining formats --
-	if t, err := dateparse.ParseAny(s); err == nil {
-		start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, now.Location())
-		end := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, now.Location())
-		return start, end, true
-	}
-
-	// -- Year-only: "2025" --
-	if yearOnlyRe.MatchString(s) {
-		year, _ := strconv.Atoi(s)
-		start := time.Date(year, 1, 1, 0, 0, 0, 0, now.Location())
-		end := time.Date(year, 12, 31, 23, 59, 59, 0, now.Location())
-		return start, end, true
-	}
-
 	return
 }
 
-var yearOnlyRe = regexp.MustCompile(`^\d{4}$`)
-
-// structuredDateRe matches strings with digits and common date separators
-// (ISO, slashes, dots) — indicating a structured date format.
-var structuredDateRe = regexp.MustCompile(`\d.*[-/.].*\d|\d{8}`)
-
-// looksLikeStructuredDate returns true if s looks like a machine-formatted date.
-func looksLikeStructuredDate(s string) bool {
-	return structuredDateRe.MatchString(s)
-}
-
-var pastNRe = regexp.MustCompile(`^past\s+(\d+)\s+(day|days|week|weeks|month|months|year|years)$`)
-
-func parsePastN(s string, now time.Time) (after, before time.Time, ok bool) {
-	m := pastNRe.FindStringSubmatch(s)
-	if m == nil {
-		return
-	}
-	n, _ := strconv.Atoi(m[1])
-	unit := m[2]
-	var start time.Time
-	switch {
-	case strings.HasPrefix(unit, "day"):
-		start = now.AddDate(0, 0, -n)
-	case strings.HasPrefix(unit, "week"):
-		start = now.AddDate(0, 0, -7*n)
-	case strings.HasPrefix(unit, "month"):
-		start = now.AddDate(0, -n, 0)
-	case strings.HasPrefix(unit, "year"):
-		start = now.AddDate(-n, 0, 0)
-	default:
-		return
-	}
-	start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, now.Location())
-	return start, now, true
-}
+// ---------------------------------------------------------------------------
+// ParseSize — unchanged from original; lives here because the file is still
+// small enough (enforced by scripts/check-file-size.sh) and renaming adds churn.
+// ---------------------------------------------------------------------------
 
 // unitMultipliers maps size unit strings to byte multipliers.
 var unitMultipliers = map[string]int64{

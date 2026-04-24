@@ -98,7 +98,7 @@ func DefaultLLMConfig() LLMConfig {
 // used as a testable seam in LLMParser.
 type generateContentFn func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error)
 
-// LLMParser parses a query using Gemini Flash-Lite with tool-call mode.
+// LLMParser parses a query using Gemini Flash-Lite with direct JSON mode.
 type LLMParser struct {
 	client     *genai.Client
 	limiter    interface{ Allow() bool }
@@ -173,6 +173,11 @@ var opEnumValues = []string{
 	string(OpLt), string(OpLte), string(OpContains), string(OpInSet),
 }
 
+var (
+	boostMin = 0.0
+	boostMax = 5.0
+)
+
 // clauseSchema returns the genai.Schema for a single clause object.
 func clauseSchema() *genai.Schema {
 	return &genai.Schema{
@@ -188,16 +193,22 @@ func clauseSchema() *genai.Schema {
 				Enum: opEnumValues,
 			},
 			"value": {Type: genai.TypeString},
-			"boost": {Type: genai.TypeNumber},
+			"boost": {
+				Type:    genai.TypeNumber,
+				Minimum: &boostMin,
+				Maximum: &boostMax,
+			},
 		},
 	}
 }
 
-// buildResponseSchema returns the schema for the LLM response (used as FunctionDeclaration.Parameters).
+// buildResponseSchema returns the schema for the LLM JSON response.
 func buildResponseSchema() *genai.Schema {
 	cs := clauseSchema()
 	return &genai.Schema{
-		Type: genai.TypeObject,
+		Type:             genai.TypeObject,
+		Required:         []string{"reasoning", "semantic_query", "must", "must_not", "should"},
+		PropertyOrdering: []string{"reasoning", "semantic_query", "must", "must_not", "should"},
 		Properties: map[string]*genai.Schema{
 			"reasoning":      {Type: genai.TypeString},
 			"semantic_query": {Type: genai.TypeString},
@@ -208,23 +219,14 @@ func buildResponseSchema() *genai.Schema {
 	}
 }
 
-// buildToolCallConfig returns a GenerateContentConfig that forces a single
-// tool call to emit_filters.
-func buildToolCallConfig(systemPrompt string) *genai.GenerateContentConfig {
+// buildGenerateContentConfig returns a GenerateContentConfig that uses direct
+// JSON mode with a ResponseSchema instead of tool-calling.
+func buildGenerateContentConfig(systemPrompt string) *genai.GenerateContentConfig {
 	return &genai.GenerateContentConfig{
 		SystemInstruction: &genai.Content{Parts: []*genai.Part{{Text: systemPrompt}}},
-		Tools: []*genai.Tool{{
-			FunctionDeclarations: []*genai.FunctionDeclaration{{
-				Name:        "emit_filters",
-				Description: "Emit the structured filter for the user's file search query.",
-				Parameters:  buildResponseSchema(),
-			}},
-		}},
-		ToolConfig: &genai.ToolConfig{
-			FunctionCallingConfig: &genai.FunctionCallingConfig{
-				Mode: genai.FunctionCallingConfigModeAny,
-			},
-		},
+		ResponseMIMEType:  "application/json",
+		ResponseSchema:    buildResponseSchema(),
+		Temperature:       genai.Ptr[float32](0),
 	}
 }
 
@@ -267,30 +269,23 @@ func convertLLMResponseToSpec(llmResp llmResponse) FilterSpec {
 	return spec
 }
 
-// decodeToolCallResponse extracts a FilterSpec from a GenerateContentResponse
-// that contains a function call to emit_filters.
-func decodeToolCallResponse(resp *genai.GenerateContentResponse) (FilterSpec, error) {
+// decodeJSONResponse extracts a FilterSpec from the Text body of a GenerateContentResponse.
+func decodeJSONResponse(resp *genai.GenerateContentResponse) (FilterSpec, error) {
 	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
 		return FilterSpec{}, fmt.Errorf("no candidates in response")
 	}
-	for _, part := range resp.Candidates[0].Content.Parts {
-		if part.FunctionCall == nil {
-			continue
-		}
-		argsJSON, err := json.Marshal(part.FunctionCall.Args)
-		if err != nil {
-			return FilterSpec{}, fmt.Errorf("marshal function call args: %w", err)
-		}
-		var llmResp llmResponse
-		if err := json.Unmarshal(argsJSON, &llmResp); err != nil {
-			return FilterSpec{}, fmt.Errorf("unmarshal function call args: %w", err)
-		}
-		return convertLLMResponseToSpec(llmResp), nil
+	parts := resp.Candidates[0].Content.Parts
+	if len(parts) == 0 || parts[0].Text == "" {
+		return FilterSpec{}, fmt.Errorf("empty text part")
 	}
-	return FilterSpec{}, fmt.Errorf("no function call in response")
+	var llmResp llmResponse
+	if err := json.Unmarshal([]byte(parts[0].Text), &llmResp); err != nil {
+		return FilterSpec{}, fmt.Errorf("unmarshal response text: %w", err)
+	}
+	return convertLLMResponseToSpec(llmResp), nil
 }
 
-// parseWithRetry calls Gemini with tool-call mode, validates the response, and
+// parseWithRetry calls Gemini with direct JSON mode, validates the response, and
 // retries up to maxRetries times (maxRetries+1 total attempts) appending the
 // validator error as a user-role turn on each retry. Returns a typed ParseResult
 // classifying the terminal outcome: OutcomeOK, OutcomeTimeout, OutcomeRateLimited,
@@ -298,11 +293,12 @@ func decodeToolCallResponse(resp *genai.GenerateContentResponse) (FilterSpec, er
 func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpec FilterSpec) (ParseResult, error) {
 	maxRetries := p.maxRetries
 	systemPrompt := buildSystemPrompt(time.Now())
-	config := buildToolCallConfig(systemPrompt)
+	config := buildGenerateContentConfig(systemPrompt)
 
 	var lastSpec FilterSpec
 	var lastErr error
 	var lastRetryAfterMs int64
+	var haveDecoded bool
 	contents := []*genai.Content{
 		{Role: "user", Parts: []*genai.Part{{Text: query}}},
 	}
@@ -322,10 +318,14 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 			return classifyTerminalError(lastErr, lastRetryAfterMs, grammarSpec), nil
 		}
 
-		spec, decodeErr := decodeToolCallResponse(resp)
+		spec, decodeErr := decodeJSONResponse(resp)
 		if decodeErr != nil {
-			p.logger.Debug("decode tool-call response failed", "error", decodeErr, "attempt", attempt)
+			p.logger.Debug("decode JSON response failed", "error", decodeErr, "attempt", attempt)
 			if attempt == maxRetries {
+				// No successful decode ever occurred; return grammarSpec per REQ-004.
+				if !haveDecoded {
+					return ParseResult{Spec: grammarSpec, Outcome: OutcomeOK}, nil
+				}
 				return ParseResult{Spec: lastSpec, Outcome: OutcomeOK}, nil
 			}
 			if resp != nil && len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
@@ -339,6 +339,7 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 		}
 
 		lastSpec = spec
+		haveDecoded = true
 		if err := validateLLMResponse(query, spec); err == nil {
 			return ParseResult{Spec: spec, Outcome: OutcomeOK}, nil
 		} else {
@@ -356,7 +357,10 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 			})
 		}
 	}
-	// Exhausted retries without any successful response (all decode failures).
+	// Exhausted retries without any successful decode; return grammarSpec per REQ-004.
+	if !haveDecoded {
+		return ParseResult{Spec: grammarSpec, Outcome: OutcomeOK}, nil
+	}
 	return ParseResult{Spec: lastSpec, Outcome: OutcomeOK}, nil
 }
 
@@ -372,7 +376,7 @@ func classifyTerminalError(err error, lastRetryAfterMs int64, grammarSpec Filter
 	return ParseResult{Spec: grammarSpec, Outcome: OutcomeFailed}
 }
 
-// Parse invokes Gemini with tool-call mode and returns a typed ParseResult.
+// Parse invokes Gemini with direct JSON mode and returns a typed ParseResult.
 // If the local rate limiter denies the token, returns OutcomeRateLimited immediately.
 // On timeout, returns OutcomeTimeout; on 429/RESOURCE_EXHAUSTED, OutcomeRateLimited
 // with RetryAfterMs populated; on other errors, OutcomeFailed.
@@ -384,108 +388,3 @@ func (p *LLMParser) Parse(ctx context.Context, query string, grammarSpec FilterS
 	return p.parseWithRetry(ctx, query, grammarSpec)
 }
 
-// resolveDateToUnix converts a date string to a Unix int64 for use in modified_at
-// clauses. Handles ISO-8601/RFC3339 timestamps (from LLM) and NLP phrases like
-// "last week" (from NormalizeDate). Returns (unix, true) or (0, false) if
-// the string cannot be parsed.
-func resolveDateToUnix(s string, op Op) (int64, bool) {
-	// Try RFC3339 / ISO-8601 first (LLM typically emits these).
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t.Unix(), true
-	}
-	if t, err := time.Parse("2006-01-02T15:04:05Z", s); err == nil {
-		return t.Unix(), true
-	}
-	if t, err := time.Parse("2006-01-02", s); err == nil {
-		if op == OpLte || op == OpLt {
-			// End of day for upper bounds.
-			t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, t.Location())
-		}
-		return t.Unix(), true
-	}
-
-	// Fall back to NLP phrase resolution (e.g. "last week", "yesterday").
-	now := time.Now()
-	after, before, ok := NormalizeDate(s, now)
-	if !ok {
-		return 0, false
-	}
-	switch op {
-	case OpGte, OpGt:
-		return after.Unix(), true
-	case OpLte, OpLt:
-		return before.Unix(), true
-	default:
-		return after.Unix(), true
-	}
-}
-
-// llmClauseToClause converts an llmClause to a Clause, validating the field.
-// Returns (Clause{}, false) if the field is unknown (NLQ-034).
-//
-// Type coercions applied (LLM always returns string values in JSON schema):
-//   - modified_at → int64 Unix seconds (via resolveDateToUnix)
-//   - size_bytes  → int64 bytes (try plain integer, then ParseSize for "10mb" notation)
-//   - extension with op=in_set → []string (comma-split, dot-prefixed)
-func llmClauseToClause(lc llmClause) (Clause, bool) {
-	field := FieldEnum(lc.Field)
-	if !KnownFields[field] {
-		return Clause{}, false
-	}
-	op := Op(lc.Op)
-
-	var value any = lc.Value
-
-	switch field {
-	case FieldModifiedAt:
-		// Resolve date strings to Unix int64.
-		unix, resolved := resolveDateToUnix(lc.Value, op)
-		if !resolved {
-			return Clause{}, false
-		}
-		value = unix
-
-	case FieldSizeBytes:
-		// LLM may return a plain integer string ("10485760") or size notation ("10mb").
-		// Try plain int64 first, then ParseSize.
-		if n, err := strconv.ParseInt(strings.TrimSpace(lc.Value), 10, 64); err == nil {
-			value = n
-		} else {
-			// Strip any operator prefix that ParseSize expects (e.g. "10mb" → op already known).
-			_, bytes, ok := ParseSize(lc.Value)
-			if !ok {
-				return Clause{}, false
-			}
-			value = bytes
-		}
-
-	case FieldExtension:
-		if op == OpInSet {
-			// Comma-separated list: "jpg,png" or ".jpg,.png"
-			parts := strings.Split(lc.Value, ",")
-			exts := make([]string, 0, len(parts))
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p == "" {
-					continue
-				}
-				if !strings.HasPrefix(p, ".") {
-					p = "." + p
-				}
-				exts = append(exts, p)
-			}
-			if len(exts) == 0 {
-				return Clause{}, false
-			}
-			value = exts
-		}
-		// Other ops (eq, contains) keep value as string.
-	}
-
-	return Clause{
-		Field: field,
-		Op:    op,
-		Value: value,
-		Boost: float32(lc.Boost),
-	}, true
-}

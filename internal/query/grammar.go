@@ -18,230 +18,9 @@ var recognizedOps = map[string]bool{
 	"path":   true,
 }
 
-// nlKindPatterns maps natural language file type terms to file_type values.
-var nlKindPatterns = map[string]string{
-	"photos":     "image",
-	"photo":      "image",
-	"pictures":   "image",
-	"picture":    "image",
-	"images":     "image",
-	"image":      "image",
-	"screenshots": "image",
-	"screenshot":  "image",
-	"videos":     "video",
-	"video":      "video",
-	"movies":     "video",
-	"movie":      "video",
-	"audios":     "audio",
-	"audio":      "audio",
-	"music":      "audio",
-	"sound":      "audio",
-	"documents":  "document",
-	"document":   "document",
-	"docs":       "document",
-	"doc":        "document",
-	"pdfs":       "document",
-	"pdf":        "document",
-	"texts":      "text",
-	"text":       "text",
-	"codes":      "text",
-	"code":       "text",
-	"scripts":    "text",
-	"script":     "text",
-}
-
-// temporalPatterns are temporal keywords that indicate date constraints.
-var temporalPatterns = map[string]bool{
-	"today": true,
-	"yesterday": true,
-	"last week": true,
-	"last month": true,
-	"last year": true,
-	"this week": true,
-	"this month": true,
-	"this year": true,
-	"next week": true,
-	"next month": true,
-	"next year": true,
-	"past": true,
-	"recent": true,
-	"older": true,
-	"newer": true,
-	"since": true,
-	"before": true,
-	"after": true,
-}
-
-// parseNaturalLanguage attempts to parse common natural language patterns.
-// Returns (spec, remainingSemanticText, ok) where ok=true if patterns were found.
-func parseNaturalLanguage(input string, now time.Time) (FilterSpec, string, bool) {
-	lower := strings.ToLower(input)
-	
-	// Pattern: "<file type> from <time period>" (e.g., "photos from last week")
-	if kind, timePeriod, ok := extractKindAndTime(lower); ok {
-		spec := FilterSpec{Source: SourceGrammar}
-		
-		// Add file type clause
-		spec.Must = append(spec.Must, Clause{
-			Field: FieldFileType,
-			Op:    OpEq,
-			Value: kind,
-		})
-		
-		// Add time constraint if found
-		if timePeriod != "" {
-			if afterT, beforeT, ok := NormalizeDate(timePeriod, now); ok {
-				spec.Must = append(spec.Must, Clause{
-					Field: FieldModifiedAt,
-					Op:    OpGte,
-					Value: afterT.Unix(),
-				})
-				if !beforeT.Equal(now) {
-					spec.Must = append(spec.Must, Clause{
-						Field: FieldModifiedAt,
-						Op:    OpLte,
-						Value: beforeT.Unix(),
-					})
-				}
-			}
-		}
-		
-		// Extract remaining semantic text
-		semantic := extractSemanticText(input, lower, kind, timePeriod)
-		return spec, semantic, true
-	}
-	
-	// Pattern: "<file type> that I took/on <date>" (e.g., "videos that I took on 12th march")
-	if kind, specificDate, ok := extractKindAndDate(lower); ok {
-		spec := FilterSpec{Source: SourceGrammar}
-		
-		// Add file type clause
-		spec.Must = append(spec.Must, Clause{
-			Field: FieldFileType,
-			Op:    OpEq,
-			Value: kind,
-		})
-		
-		// Add specific date constraint
-		if afterT, beforeT, ok := NormalizeDate(specificDate, now); ok {
-			spec.Must = append(spec.Must, Clause{
-				Field: FieldModifiedAt,
-				Op:    OpGte,
-				Value: afterT.Unix(),
-			})
-			spec.Must = append(spec.Must, Clause{
-				Field: FieldModifiedAt,
-				Op:    OpLte,
-				Value: beforeT.Unix(),
-			})
-		}
-		
-		// Extract remaining semantic text
-		semantic := extractSemanticText(input, lower, kind, specificDate)
-		return spec, semantic, true
-	}
-	
-	// Pattern: "<file type>" (simple file type filtering)
-	if kind, ok := extractSimpleKind(lower); ok {
-		spec := FilterSpec{Source: SourceGrammar}
-		spec.Must = append(spec.Must, Clause{
-			Field: FieldFileType,
-			Op:    OpEq,
-			Value: kind,
-		})
-		
-		// Extract remaining semantic text
-		semantic := extractSemanticText(input, lower, kind, "")
-		return spec, semantic, true
-	}
-	
-	return FilterSpec{}, "", false
-}
-
-// extractKindAndTime looks for patterns like "photos from last week"
-func extractKindAndTime(lower string) (string, string, bool) {
-	// Split into words and look for "from" as a separator
-	words := strings.Fields(lower)
-	for i := 0; i < len(words)-2; i++ {
-		if words[i+1] == "from" {
-			// Check if first word is a file type
-			if kind, ok := nlKindPatterns[words[i]]; ok {
-				// Check if the remaining part is a time period
-				timePeriod := strings.Join(words[i+2:], " ")
-				if temporalPatterns[timePeriod] {
-					return kind, timePeriod, true
-				}
-			}
-		}
-	}
-	return "", "", false
-}
-
-// extractKindAndDate looks for patterns like "videos that I took on 12th march"
-func extractKindAndDate(lower string) (string, string, bool) {
-	// Split into words and look for "on" as a separator
-	words := strings.Fields(lower)
-	for i := 0; i < len(words)-2; i++ {
-		if words[i+1] == "on" {
-			// Check if word before "on" could be a file type
-			if kind, ok := nlKindPatterns[words[i]]; ok {
-				// The rest after "on" should be the date
-				datePart := strings.Join(words[i+2:], " ")
-				return kind, datePart, true
-			}
-		}
-	}
-	return "", "", false
-}
-
-// extractSimpleKind looks for simple patterns like "photos" or "videos"
-func extractSimpleKind(lower string) (string, bool) {
-	words := strings.Fields(lower)
-	if len(words) == 1 {
-		if kind, ok := nlKindPatterns[words[0]]; ok {
-			return kind, true
-		}
-	}
-	return "", false
-}
-
-// extractSemanticText removes the parsed parts from the original input
-func extractSemanticText(original, lower, kind, timePart string) string {
-	// Remove the kind and time part from the original input
-	// This is a simple implementation - could be improved for more complex patterns
-	words := strings.Fields(lower)
-	var remainingWords []string
-	
-	for _, word := range words {
-		if word != kind && word != timePart {
-			remainingWords = append(remainingWords, word)
-		}
-	}
-	
-	if len(remainingWords) == 0 {
-		return ""
-	}
-	
-	// Reconstruct from original to preserve case
-	originalWords := strings.Fields(original)
-	var result []string
-	
-	for _, origWord := range originalWords {
-		keep := true
-		lowerOrig := strings.ToLower(origWord)
-		for _, remWord := range remainingWords {
-			if lowerOrig == remWord {
-				keep = true
-				break
-			}
-		}
-		if keep {
-			result = append(result, origWord)
-		}
-	}
-	
-	return strings.Join(result, " ")
-}
+// nowFunc returns the reference time used by the grammar's NL date resolution.
+// Overridable from tests via setNowForTest. Production always uses time.Now().
+var nowFunc = func() time.Time { return time.Now() }
 
 // Parse converts a user query string into a FilterSpec.
 // It never panics and returns a best-effort result on malformed input.
@@ -253,7 +32,7 @@ func Parse(input string) (spec FilterSpec) {
 		spec.Source = SourceGrammar
 	}()
 
-	now := time.Now()
+	now := nowFunc()
 	var semanticParts []string
 
 	// First, try to parse natural language patterns
@@ -369,8 +148,101 @@ func Parse(input string) (spec FilterSpec) {
 		semanticParts = append(semanticParts, tok)
 	}
 
-	spec.SemanticQuery = strings.TrimSpace(strings.Join(semanticParts, " "))
+	semanticText := strings.TrimSpace(strings.Join(semanticParts, " "))
+
+	// Post-pass: scan semantic text for an embedded date phrase. If one is
+	// found AND the spec doesn't already have a modified_at clause (from an
+	// explicit operator like before:/after:), emit it and strip the matched
+	// phrase from the semantic text.
+	if semanticText != "" && !specHasModifiedAt(spec) {
+		if after, before, matched, ok := scanForEmbeddedDate(semanticText, now); ok {
+			spec.Must = append(spec.Must,
+				Clause{Field: FieldModifiedAt, Op: OpGte, Value: after.Unix()},
+				Clause{Field: FieldModifiedAt, Op: OpLte, Value: before.Unix()},
+			)
+			semanticText = removeMatchedPhrase(semanticText, matched)
+		}
+	}
+
+	spec.SemanticQuery = semanticText
 	return spec
+}
+
+// specHasModifiedAt returns true iff spec.Must already contains a modified_at
+// clause (from an explicit before:/after: operator or from parseNaturalLanguage).
+func specHasModifiedAt(spec FilterSpec) bool {
+	for _, c := range spec.Must {
+		if c.Field == FieldModifiedAt {
+			return true
+		}
+	}
+	return false
+}
+
+// removeMatchedPhrase strips the first occurrence of the matched date phrase
+// from the semantic text and also strips nearby filler connectives (from, on,
+// at, in, of, during, dated, created, modified) that precede it, along with
+// possessive "'s" suffixes.
+func removeMatchedPhrase(text, phrase string) string {
+	lowerText := strings.ToLower(text)
+	idx := strings.Index(lowerText, phrase)
+	if idx < 0 {
+		return strings.TrimSpace(text)
+	}
+	before := text[:idx]
+	after := text[idx+len(phrase):]
+
+	// Strip one or more trailing filler connective words from `before`.
+	trimmedBefore := strings.TrimRight(before, " ")
+	// Try longest multi-word fillers first, then loop single-word ones.
+	multiWord := []string{
+		"created in the", "created in", "created on", "uploaded in", "uploaded on",
+		"modified in the", "modified in", "modified on",
+		"in the past", "in the last", "within the last", "within the past",
+		"within the", "in the", "within",
+	}
+	singleWord := []string{
+		"from", "on", "at", "during", "dated", "in", "of", "for", "about",
+		"around", "just", "created", "modified", "uploaded",
+	}
+	for _, f := range multiWord {
+		if strings.HasSuffix(strings.ToLower(trimmedBefore), " "+f) ||
+			strings.EqualFold(trimmedBefore, f) {
+			trimmedBefore = trimmedBefore[:len(trimmedBefore)-len(f)]
+			trimmedBefore = strings.TrimRight(trimmedBefore, " ")
+			break
+		}
+	}
+	// Strip up to 3 more trailing single-word fillers.
+	for i := 0; i < 3; i++ {
+		stripped := false
+		for _, filler := range singleWord {
+			if strings.HasSuffix(strings.ToLower(trimmedBefore), " "+filler) ||
+				strings.EqualFold(trimmedBefore, filler) {
+				trimmedBefore = trimmedBefore[:len(trimmedBefore)-len(filler)]
+				trimmedBefore = strings.TrimRight(trimmedBefore, " ")
+				stripped = true
+				break
+			}
+		}
+		if !stripped {
+			break
+		}
+	}
+
+	// Strip a leading possessive "'s" from `after`.
+	after = strings.TrimLeft(after, " ")
+	if strings.HasPrefix(after, "'s ") || after == "'s" {
+		after = strings.TrimPrefix(after, "'s")
+		after = strings.TrimLeft(after, " ")
+	}
+
+	combined := strings.TrimSpace(trimmedBefore + " " + after)
+	// Collapse double spaces.
+	for strings.Contains(combined, "  ") {
+		combined = strings.ReplaceAll(combined, "  ", " ")
+	}
+	return combined
 }
 
 // readToken reads runes until whitespace or end-of-input.

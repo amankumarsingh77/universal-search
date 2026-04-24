@@ -22,9 +22,9 @@ func buildFakeParserWithRetries(generate generateContentFn, maxRetries int) *LLM
 	}
 }
 
-// buildValidToolCallResponse constructs a minimal valid *genai.GenerateContentResponse
-// containing a FunctionCall to emit_filters with a valid set of args.
-func buildValidToolCallResponse(semanticQuery string) *genai.GenerateContentResponse {
+// buildValidJSONResponse constructs a minimal valid *genai.GenerateContentResponse
+// containing a Text part with JSON-encoded args for direct JSON mode.
+func buildValidJSONResponse(semanticQuery string) *genai.GenerateContentResponse {
 	argsMap := map[string]any{
 		"reasoning":      "",
 		"semantic_query": semanticQuery,
@@ -35,17 +35,17 @@ func buildValidToolCallResponse(semanticQuery string) *genai.GenerateContentResp
 	return &genai.GenerateContentResponse{
 		Candidates: []*genai.Candidate{{
 			Content: &genai.Content{
-				Parts: []*genai.Part{{FunctionCall: &genai.FunctionCall{Name: "emit_filters", Args: argsMap}}},
+				Parts: []*genai.Part{{Text: mustMarshal(argsMap)}},
 			},
 		}},
 	}
 }
 
-// TestParseOutcomeOK verifies that a valid tool-call response produces OutcomeOK.
+// TestParseOutcomeOK verifies that a valid JSON response produces OutcomeOK.
 // REQ-001 (baseline OK path).
 func TestParseOutcomeOK(t *testing.T) {
 	generate := func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
-		return buildValidToolCallResponse("x"), nil
+		return buildValidJSONResponse("x"), nil
 	}
 	p := buildFakeParserWithRetries(generate, 0)
 	grammarSpec := FilterSpec{SemanticQuery: "fallback"}

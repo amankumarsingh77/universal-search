@@ -1,6 +1,9 @@
 package embedder
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Embedder is the narrow interface used by indexing and search code to produce
 // vector embeddings. Concrete implementations include GeminiEmbedder (live
@@ -10,4 +13,7 @@ type Embedder interface {
 	Dimensions() int
 	EmbedBatch(ctx context.Context, inputs []ChunkInput) ([][]float32, error)
 	EmbedQuery(ctx context.Context, text string) ([]float32, error)
+	// PausedUntil returns the time until which the embedder's rate limiter is
+	// paused. Returns the zero time if no pause is active.
+	PausedUntil() time.Time
 }

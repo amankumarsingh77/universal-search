@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"findo/internal/apperr"
 	"google.golang.org/genai"
 )
 
@@ -199,6 +200,17 @@ func isRetryable(err error) bool {
 		strings.Contains(s, "RESOURCE_EXHAUSTED")
 }
 
+// isRateLimitErr reports whether err signals a quota / rate-limit failure (429
+// or RESOURCE_EXHAUSTED). Unlike isRetryable it does NOT match 503 (service
+// unavailable), so only genuine quota errors are classified as rate-limited.
+func isRateLimitErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "429") || strings.Contains(s, "RESOURCE_EXHAUSTED")
+}
+
 var retryDelayRe = regexp.MustCompile(`retry_delay:\{seconds:(\d+)`)
 
 func parseRetryAfter(err error) time.Duration {
@@ -237,6 +249,9 @@ func (e *GeminiEmbedder) embed(ctx context.Context, contents []*genai.Content, t
 		lastErr = err
 
 		if !isRetryable(err) {
+			if isRateLimitErr(err) {
+				return nil, apperr.Wrap(apperr.ErrRateLimited.Code, "embedder: rate limited", err)
+			}
 			return nil, fmt.Errorf("embedder: embed: %w", err)
 		}
 
@@ -278,6 +293,9 @@ func (e *GeminiEmbedder) embed(ctx context.Context, contents []*genai.Content, t
 		}
 	}
 
+	if isRateLimitErr(lastErr) {
+		return nil, apperr.Wrap(apperr.ErrRateLimited.Code, "embedder: rate limited after retries", lastErr)
+	}
 	return nil, fmt.Errorf("embedder: all %d retries exhausted: %w", e.maxRetries, lastErr)
 }
 
@@ -300,6 +318,15 @@ func (e *GeminiEmbedder) Dimensions() int { return int(e.dims) }
 
 // Limiter returns the rate limiter used by the embedder.
 func (e *GeminiEmbedder) Limiter() *RateLimiter { return e.limiter }
+
+// PausedUntil returns the time until which the rate limiter is paused.
+// Returns the zero time if no pause is active or the limiter is nil.
+func (e *GeminiEmbedder) PausedUntil() time.Time {
+	if e.limiter == nil {
+		return time.Time{}
+	}
+	return e.limiter.PausedUntil()
+}
 
 // Client returns the underlying genai.Client used by the embedder.
 func (e *GeminiEmbedder) Client() *genai.Client { return e.client }

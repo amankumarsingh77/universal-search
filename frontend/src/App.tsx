@@ -9,6 +9,8 @@ import { FolderManager } from './components/FolderManager';
 import ApiKeyDialog from './components/ApiKeyDialog';
 import Toast from './components/Toast';
 import ReindexBanner from './components/ReindexBanner';
+import ErrorBanner from './components/ErrorBanner';
+import WarningChip from './components/WarningChip';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
@@ -28,8 +30,11 @@ function App() {
     banner,
     removeChip,
     forceParseQuery,
+    forceSearch,
     isOffline,
     errorCode,
+    warning,
+    retryAfterMs,
   } = useSearch();
 
   const indexingStatus = useIndexingStatus();
@@ -186,8 +191,21 @@ function App() {
         onChipRemove={removeChip}
         banner={banner}
         onForceParseQuery={forceParseQuery}
+        warningChip={
+          warning === 'query_parse_timeout'
+            ? <WarningChip key={warning} label="Query understanding was slow" />
+            : undefined
+        }
       />
-      <ReindexBanner errorCode={errorCode} />
+      {errorCode === 'ERR_MODEL_MISMATCH' ? (
+        <ReindexBanner errorCode={errorCode} />
+      ) : errorCode ? (
+        <ErrorBanner
+          code={errorCode}
+          retryAfterMs={retryAfterMs}
+          onRetry={errorCode.startsWith('ERR_QUERY_') ? forceParseQuery : forceSearch}
+        />
+      ) : null}
       <div style={styles.body}>
         {(() => {
           const trimmedQuery = query.trim();

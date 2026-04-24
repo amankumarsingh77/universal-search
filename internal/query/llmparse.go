@@ -3,14 +3,82 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"google.golang.org/genai"
 )
+
+// ParseOutcome describes the terminal outcome of an LLM parse attempt.
+type ParseOutcome int
+
+const (
+	// OutcomeOK means the LLM responded and the spec was decoded successfully.
+	OutcomeOK ParseOutcome = iota
+	// OutcomeTimeout means the context deadline was exceeded before a response arrived.
+	OutcomeTimeout
+	// OutcomeRateLimited means either the local token bucket denied the call or
+	// the API returned a 429 / RESOURCE_EXHAUSTED error.
+	OutcomeRateLimited
+	// OutcomeFailed means a non-transient transport or API error occurred.
+	OutcomeFailed
+)
+
+// ParseResult is the typed return value of LLMParser.Parse.
+type ParseResult struct {
+	// Spec holds the parsed FilterSpec. On non-OK outcomes it equals the grammarSpec
+	// passed to Parse so callers can always use Spec without branching.
+	Spec FilterSpec
+	// Outcome classifies the terminal state of the parse attempt.
+	Outcome ParseOutcome
+	// RetryAfterMs is the suggested backoff in milliseconds extracted from a
+	// 429 Retry-After / retry_delay field. Zero when not applicable or not parseable.
+	RetryAfterMs int64
+}
+
+// retryDelayRe matches `retry_delay:{seconds:N}` in Gemini error messages.
+var retryDelayRe = regexp.MustCompile(`retry_delay:\{seconds:(\d+)`)
+
+// retryAfterHeaderRe matches a literal `Retry-After: N` substring (some genai
+// error paths include raw response headers in the error string).
+var retryAfterHeaderRe = regexp.MustCompile(`Retry-After:\s*(\d+)`)
+
+// parseRetryAfterMs extracts a retry-after duration in milliseconds from an
+// error string. Returns 0 when the error is nil or no parseable value is found.
+func parseRetryAfterMs(err error) int64 {
+	if err == nil {
+		return 0
+	}
+	s := err.Error()
+	if m := retryDelayRe.FindStringSubmatch(s); len(m) == 2 {
+		if n, e := strconv.Atoi(m[1]); e == nil && n > 0 {
+			return int64(n) * 1000
+		}
+	}
+	if m := retryAfterHeaderRe.FindStringSubmatch(s); len(m) == 2 {
+		if n, e := strconv.Atoi(m[1]); e == nil && n > 0 {
+			return int64(n) * 1000
+		}
+	}
+	return 0
+}
+
+// isRateLimitErrString returns true when err's message contains any of the
+// standard 429 / quota-exhausted signal strings.
+func isRateLimitErrString(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "429") ||
+		strings.Contains(s, "RESOURCE_EXHAUSTED") ||
+		strings.Contains(s, "Too Many Requests")
+}
 
 // LLMConfig holds tunables for the LLM query parser.
 type LLMConfig struct {
@@ -223,15 +291,18 @@ func decodeToolCallResponse(resp *genai.GenerateContentResponse) (FilterSpec, er
 }
 
 // parseWithRetry calls Gemini with tool-call mode, validates the response, and
-// retries up to 2 times (3 total attempts) appending the validator error as
-// a user-role turn. On transport error on the first call, returns grammarSpec.
-// On exhausted retries, returns the last response (never errors out).
-func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpec FilterSpec) (FilterSpec, error) {
+// retries up to maxRetries times (maxRetries+1 total attempts) appending the
+// validator error as a user-role turn on each retry. Returns a typed ParseResult
+// classifying the terminal outcome: OutcomeOK, OutcomeTimeout, OutcomeRateLimited,
+// or OutcomeFailed. On all non-OK outcomes, ParseResult.Spec == grammarSpec.
+func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpec FilterSpec) (ParseResult, error) {
 	maxRetries := p.maxRetries
 	systemPrompt := buildSystemPrompt(time.Now())
 	config := buildToolCallConfig(systemPrompt)
 
 	var lastSpec FilterSpec
+	var lastErr error
+	var lastRetryAfterMs int64
 	contents := []*genai.Content{
 		{Role: "user", Parts: []*genai.Part{{Text: query}}},
 	}
@@ -239,17 +310,23 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		resp, err := p.generate(ctx, p.model, contents, config)
 		if err != nil {
-			if attempt == 0 {
-				return grammarSpec, nil
+			lastErr = err
+			// Track the best retry-after hint we've seen across all attempts.
+			if ms := parseRetryAfterMs(err); ms > 0 {
+				lastRetryAfterMs = ms
 			}
-			return lastSpec, nil
+			if attempt < maxRetries {
+				continue
+			}
+			// All attempts exhausted — classify the terminal error.
+			return classifyTerminalError(lastErr, lastRetryAfterMs, grammarSpec), nil
 		}
 
 		spec, decodeErr := decodeToolCallResponse(resp)
 		if decodeErr != nil {
 			p.logger.Debug("decode tool-call response failed", "error", decodeErr, "attempt", attempt)
 			if attempt == maxRetries {
-				return lastSpec, nil
+				return ParseResult{Spec: lastSpec, Outcome: OutcomeOK}, nil
 			}
 			if resp != nil && len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
 				contents = append(contents, resp.Candidates[0].Content)
@@ -263,11 +340,12 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 
 		lastSpec = spec
 		if err := validateLLMResponse(query, spec); err == nil {
-			return spec, nil
+			return ParseResult{Spec: spec, Outcome: OutcomeOK}, nil
 		} else {
 			p.logger.Debug("validator failed", "error", err, "attempt", attempt)
 			if attempt == maxRetries {
-				return spec, nil
+				// Soft success: model responded but structured fields were imperfect.
+				return ParseResult{Spec: spec, Outcome: OutcomeOK}, nil
 			}
 			if resp != nil && len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
 				contents = append(contents, resp.Candidates[0].Content)
@@ -278,14 +356,30 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 			})
 		}
 	}
-	return lastSpec, nil
+	// Exhausted retries without any successful response (all decode failures).
+	return ParseResult{Spec: lastSpec, Outcome: OutcomeOK}, nil
 }
 
-// Parse invokes Gemini with tool-call mode.
-// If rate-limited, timed out, or errored, returns grammarSpec unchanged.
-func (p *LLMParser) Parse(ctx context.Context, query string, grammarSpec FilterSpec) (FilterSpec, error) {
+// classifyTerminalError maps a terminal generate() error to a ParseResult with
+// the appropriate outcome. grammarSpec is used as the Spec in all non-OK cases.
+func classifyTerminalError(err error, lastRetryAfterMs int64, grammarSpec FilterSpec) ParseResult {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ParseResult{Spec: grammarSpec, Outcome: OutcomeTimeout}
+	}
+	if isRateLimitErrString(err) {
+		return ParseResult{Spec: grammarSpec, Outcome: OutcomeRateLimited, RetryAfterMs: lastRetryAfterMs}
+	}
+	return ParseResult{Spec: grammarSpec, Outcome: OutcomeFailed}
+}
+
+// Parse invokes Gemini with tool-call mode and returns a typed ParseResult.
+// If the local rate limiter denies the token, returns OutcomeRateLimited immediately.
+// On timeout, returns OutcomeTimeout; on 429/RESOURCE_EXHAUSTED, OutcomeRateLimited
+// with RetryAfterMs populated; on other errors, OutcomeFailed.
+// In all non-OK cases, ParseResult.Spec == grammarSpec unchanged.
+func (p *LLMParser) Parse(ctx context.Context, query string, grammarSpec FilterSpec) (ParseResult, error) {
 	if !p.limiter.Allow() {
-		return grammarSpec, nil
+		return ParseResult{Spec: grammarSpec, Outcome: OutcomeRateLimited}, nil
 	}
 	return p.parseWithRetry(ctx, query, grammarSpec)
 }

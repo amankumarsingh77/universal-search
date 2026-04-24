@@ -116,6 +116,25 @@ test("preview panel loads for text file", async ({ page }) => {
 // ---------------------------------------------------------------------------
 const runFailuresModal = process.env["E2E_FAILURES_MODAL"] === "1";
 
+// ---------------------------------------------------------------------------
+// Error banner + warning chip smoke tests  (Phase 6 — REQ-018, REQ-020)
+//
+// These tests require a locally built Wails binary.  They exercise the
+// per-search error banner (ErrorBanner.tsx) and the query-parse-timeout
+// warning chip (WarningChip.tsx) by overriding the Wails JS bindings in the
+// browser context, so the backend is never actually called for these flows.
+//
+// Limitation: the smoke harness spawns a real binary and navigates to its
+// built-in HTTP server.  Per-test mock injection is done via page.evaluate()
+// to monkey-patch window.go.main.App methods AFTER the page loads, which is
+// the only seam available without rebuilding the app.  This approach works
+// reliably for render-only assertions (banner text, button disabled state).
+//
+// To run locally:
+//   E2E_ERROR_BANNER=1 npx playwright test e2e/smoke.spec.ts --grep "error banner"
+// ---------------------------------------------------------------------------
+const runErrorBanner = process.env["E2E_ERROR_BANNER"] === "1";
+
 test.describe.configure({ mode: "serial" });
 
 (runFailuresModal ? test.describe : test.describe.skip)(
@@ -179,6 +198,169 @@ test.describe.configure({ mode: "serial" });
       // Close the modal via the footer "Close" button.
       await modal.getByRole("button", { name: "Close" }).click();
       await expect(modal).not.toBeVisible({ timeout: 3_000 });
+    });
+  },
+);
+
+(runErrorBanner ? test.describe : test.describe.skip)(
+  "error banner + warning chip — requires local binary (E2E_ERROR_BANNER=1)",
+  () => {
+    // -----------------------------------------------------------------------
+    // Scenario A: ERR_EMBED_FAILED banner visibility
+    //
+    // Monkey-patch window.go.main.App.SearchWithFilters to return an error
+    // response carrying errorCode="ERR_EMBED_FAILED".  The React app should
+    // render the ErrorBanner with the human-readable label from CODE_LABELS.
+    // -----------------------------------------------------------------------
+    test("ERR_EMBED_FAILED — error banner shows 'Embedding failed' label", async ({ page }) => {
+      await page.goto("http://localhost:34115");
+
+      // Wait for the search input to be ready.
+      await expect(page.locator('[data-testid="search-input"]')).toBeVisible({ timeout: 10_000 });
+
+      // Inject mocks — keep parsing successful so the search path is reached,
+      // then simulate ERR_EMBED_FAILED from SearchWithFilters.
+      await page.evaluate(() => {
+        const go = (window as any).go;
+        if (!go?.main?.App) return;
+        go.main.App.ParseQuery = async (query: string) => ({
+          chips: [],
+          semanticQuery: query,
+          hasFilters: false,
+          cacheHit: false,
+          isOffline: false,
+          errorCode: "",
+          warning: "",
+          retryAfterMs: 0,
+        });
+        go.main.App.SearchWithFilters = async () => ({
+          results: [],
+          errorCode: "ERR_EMBED_FAILED",
+          retryAfterMs: 0,
+        });
+      });
+
+      // Type a query to trigger the search path.
+      const input = page.locator('[data-testid="search-input"]');
+      await input.fill("quarterly report");
+      await input.press("Enter");
+
+      // The ErrorBanner should appear with the label mapped from CODE_LABELS.
+      const banner = page.locator('[data-testid="error-banner"]');
+      await expect(banner).toBeVisible({ timeout: 5_000 });
+      await expect(banner).toContainText("Embedding failed");
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario B: ERR_RATE_LIMITED countdown + disabled Retry button
+    //
+    // Monkey-patch SearchWithFilters to return errorCode="ERR_RATE_LIMITED"
+    // with retryAfterMs=5000.  The ErrorBanner should display "5s" in the
+    // countdown span and the Retry button should be disabled initially.
+    // -----------------------------------------------------------------------
+    test("ERR_RATE_LIMITED — shows 5s countdown and Retry button is disabled", async ({ page }) => {
+      await page.goto("http://localhost:34115");
+
+      await expect(page.locator('[data-testid="search-input"]')).toBeVisible({ timeout: 10_000 });
+
+      // Inject mocks — keep parsing successful so the search path is reached.
+      await page.evaluate(() => {
+        const go = (window as any).go;
+        if (!go?.main?.App) return;
+        go.main.App.ParseQuery = async (query: string) => ({
+          chips: [],
+          semanticQuery: query,
+          hasFilters: false,
+          cacheHit: false,
+          isOffline: false,
+          errorCode: "",
+          warning: "",
+          retryAfterMs: 0,
+        });
+        go.main.App.SearchWithFilters = async () => ({
+          results: [],
+          errorCode: "ERR_RATE_LIMITED",
+          retryAfterMs: 5000,
+        });
+      });
+
+      const input = page.locator('[data-testid="search-input"]');
+      await input.fill("budget planning");
+      await input.press("Enter");
+
+      const banner = page.locator('[data-testid="error-banner"]');
+      await expect(banner).toBeVisible({ timeout: 5_000 });
+
+      // Countdown span should show "5s" immediately after render.
+      await expect(banner).toContainText("5s");
+
+      // Retry button should be disabled while the countdown is active.
+      const retryBtn = banner.getByRole("button", { name: "Retry" });
+      await expect(retryBtn).toBeDisabled({ timeout: 3_000 });
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario C: query_parse_timeout warning chip — search still runs
+    //
+    // Monkey-patch ParseQuery to return {warning: 'query_parse_timeout', ...}
+    // and SearchWithFilters to return one fake result.  The WarningChip should
+    // be visible in the chip row AND the fake result should appear, confirming
+    // that a parse timeout does not block the search.
+    // -----------------------------------------------------------------------
+    test("query_parse_timeout — warning chip visible and result still renders", async ({ page }) => {
+      await page.goto("http://localhost:34115");
+
+      await expect(page.locator('[data-testid="search-input"]')).toBeVisible({ timeout: 10_000 });
+
+      // Inject mocks — ParseQuery returns a timeout warning, SearchWithFilters
+      // returns one stub result so we can assert it renders.
+      await page.evaluate(() => {
+        const go = (window as any).go;
+        if (!go?.main?.App) return;
+        go.main.App.ParseQuery = async () => ({
+          warning: "query_parse_timeout",
+          chips: [],
+          semanticQuery: "hello",
+          hasFilters: false,
+          cacheHit: false,
+          isOffline: false,
+          errorCode: "",
+          retryAfterMs: 0,
+        });
+        go.main.App.SearchWithFilters = async () => ({
+          results: [
+            {
+              filePath: "/tmp/hello.txt",
+              fileName: "hello.txt",
+              fileType: "text",
+              extension: "txt",
+              sizeBytes: 11,
+              thumbnailPath: "",
+              startTime: 0,
+              endTime: 0,
+              score: 0.9,
+              modifiedAt: Math.floor(Date.now() / 1000),
+            },
+          ],
+          relaxationBanner: "",
+          errorCode: "",
+          retryAfterMs: 0,
+        });
+      });
+
+      const input = page.locator('[data-testid="search-input"]');
+      await input.fill("hello");
+      // Trigger parse immediately via Enter.
+      await input.press("Enter");
+
+      // The WarningChip renders inside the chip row in SearchBar.tsx.
+      // Its label text is "Query understanding was slow".
+      await expect(page.getByText("Query understanding was slow")).toBeVisible({ timeout: 5_000 });
+
+      // The search result should also render despite the parse timeout.
+      await expect(page.locator('[data-testid="result-item"]').filter({ hasText: "hello.txt" })).toBeVisible({
+        timeout: 5_000,
+      });
     });
   },
 );

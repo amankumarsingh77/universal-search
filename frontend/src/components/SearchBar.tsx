@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react';
+import React, { useRef, useEffect } from 'react';
 import { FilterChip } from './FilterChip';
 import type { ChipDTO } from '../state/searchReducer';
 
@@ -11,6 +11,7 @@ interface SearchBarProps {
   onChipRemove?: (clauseKey: string) => void;
   banner?: string | null;
   onForceParseQuery?: () => void;
+  warningChip?: React.ReactNode;
 }
 
 export function SearchBar({
@@ -22,6 +23,7 @@ export function SearchBar({
   onChipRemove,
   banner,
   onForceParseQuery,
+  warningChip,
 }: SearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -79,7 +81,7 @@ export function SearchBar({
           </button>
         )}
       </div>
-      {chips.length > 0 && (
+      {(chips.length > 0 || warningChip) && (
         <div style={styles.chipRow}>
           {chips.map(chip => (
             <FilterChip
@@ -89,6 +91,7 @@ export function SearchBar({
               onRemove={onChipRemove ?? (() => {})}
             />
           ))}
+          {warningChip}
         </div>
       )}
       {banner && (

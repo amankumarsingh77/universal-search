@@ -638,7 +638,7 @@ type mockStore struct {
 	data map[string]string
 }
 
-func (m *mockStore) UpsertParsedQueryCache(normalizedQuery, specJSON string) error {
+func (m *mockStore) UpsertParsedQueryCache(normalizedQuery, specJSON string, schemaVersion int) error {
 	if m.data == nil {
 		m.data = make(map[string]string)
 	}
@@ -646,7 +646,7 @@ func (m *mockStore) UpsertParsedQueryCache(normalizedQuery, specJSON string) err
 	return nil
 }
 
-func (m *mockStore) GetParsedQueryCache(normalizedQuery string) (string, error) {
+func (m *mockStore) GetParsedQueryCache(normalizedQuery string, schemaVersion int) (string, error) {
 	if m.data == nil {
 		return "", nil
 	}

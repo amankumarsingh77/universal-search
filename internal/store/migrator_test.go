@@ -52,8 +52,8 @@ func TestApply_FreshDB(t *testing.T) {
 		got = append(got, r)
 	}
 
-	if len(got) != 4 {
-		t.Fatalf("expected 4 migrations applied, got %d", len(got))
+	if len(got) != 5 {
+		t.Fatalf("expected 5 migrations applied, got %d", len(got))
 	}
 	for i, r := range got {
 		if r.version != i+1 {
@@ -99,8 +99,8 @@ func TestApply_SkipsAlreadyApplied(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 4 {
-		t.Fatalf("expected 4 rows, got %d", count)
+	if count != 5 {
+		t.Fatalf("expected 5 rows, got %d", count)
 	}
 
 	// Version 2's ALTER TABLE must have run: chunks.vector_blob column exists.
@@ -110,6 +110,10 @@ func TestApply_SkipsAlreadyApplied(t *testing.T) {
 	// Version 3 table exists.
 	if !tableExists(t, db, "parsed_query_cache") {
 		t.Error("expected parsed_query_cache after migration 3 ran")
+	}
+	// Version 5's ALTER TABLE must have run: schema_version column exists.
+	if !columnExists(t, db, "parsed_query_cache", "schema_version") {
+		t.Error("expected schema_version column after migration 5 ran")
 	}
 }
 
@@ -238,9 +242,9 @@ func TestApply_LegacyAdoption(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	// Legacy adoption stamps 1..3; migration 004 is a real new migration that runs on top.
-	if count != 4 {
-		t.Fatalf("expected 4 rows after legacy adoption + migration 004, got %d", count)
+	// Legacy adoption stamps 1..3; migrations 004 and 005 are real new migrations that run on top.
+	if count != 5 {
+		t.Fatalf("expected 5 rows after legacy adoption + migrations 004+005, got %d", count)
 	}
 	if !columnExists(t, db, "chunks", "embedding_model") {
 		t.Error("expected embedding_model column after migration 004 ran")

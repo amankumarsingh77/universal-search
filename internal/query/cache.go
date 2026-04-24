@@ -10,8 +10,8 @@ import (
 
 // StoreQuerier is the store interface needed by the cache.
 type StoreQuerier interface {
-	UpsertParsedQueryCache(normalizedQuery, specJSON string) error
-	GetParsedQueryCache(normalizedQuery string) (string, error)
+	UpsertParsedQueryCache(normalizedQuery, specJSON string, schemaVersion int) error
+	GetParsedQueryCache(normalizedQuery string, schemaVersion int) (string, error)
 }
 
 // ParsedQueryCache wraps the store to cache parsed FilterSpecs by query key.
@@ -38,15 +38,16 @@ func NormalizeKey(query string) string {
 	return strings.TrimSpace(s)
 }
 
-// Get retrieves a cached FilterSpec for the query. Returns nil on cache miss.
+// Get retrieves a cached FilterSpec for the query. Returns nil on cache miss or
+// version mismatch (rows at a different schema_version are silently ignored).
 func (c *ParsedQueryCache) Get(query string) (*FilterSpec, error) {
 	key := NormalizeKey(query)
-	data, err := c.store.GetParsedQueryCache(key)
+	data, err := c.store.GetParsedQueryCache(key, CacheSchemaVersion)
 	if err != nil {
 		return nil, err
 	}
 	if data == "" {
-		return nil, nil // cache miss
+		return nil, nil // cache miss or version mismatch
 	}
 	var spec FilterSpec
 	if err := unmarshalFilterSpec([]byte(data), &spec); err != nil {
@@ -56,14 +57,14 @@ func (c *ParsedQueryCache) Get(query string) (*FilterSpec, error) {
 	return &spec, nil
 }
 
-// Set stores the FilterSpec for the query in the cache.
+// Set stores the FilterSpec for the query in the cache at the current schema version.
 func (c *ParsedQueryCache) Set(query string, spec FilterSpec) error {
 	key := NormalizeKey(query)
 	data, err := marshalFilterSpec(spec)
 	if err != nil {
 		return fmt.Errorf("cache: marshal: %w", err)
 	}
-	return c.store.UpsertParsedQueryCache(key, string(data))
+	return c.store.UpsertParsedQueryCache(key, string(data), CacheSchemaVersion)
 }
 
 // ---------------------------------------------------------------------------

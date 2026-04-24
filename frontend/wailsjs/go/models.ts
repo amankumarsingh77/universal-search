@@ -1,5 +1,5 @@
 export namespace app {
-
+	
 	export class ChipDTO {
 	    label: string;
 	    field: string;
@@ -7,11 +7,11 @@ export namespace app {
 	    value: string;
 	    clauseKey: string;
 	    clauseType: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ChipDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.label = source["label"];
@@ -27,11 +27,11 @@ export namespace app {
 	    label: string;
 	    count: number;
 	    sampleFiles: string[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FailureGroupDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.code = source["code"];
@@ -46,11 +46,11 @@ export namespace app {
 	    message: string;
 	    attempts: number;
 	    lastFailedAt: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IndexFailureDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
@@ -71,11 +71,11 @@ export namespace app {
 	    quotaResumeAt: string;
 	    pendingRetryFiles: number;
 	    failedFileGroups: FailureGroupDTO[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new IndexStatusDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.totalFiles = source["totalFiles"];
@@ -89,7 +89,7 @@ export namespace app {
 	        this.pendingRetryFiles = source["pendingRetryFiles"];
 	        this.failedFileGroups = this.convertValues(source["failedFileGroups"], FailureGroupDTO);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -117,11 +117,11 @@ export namespace app {
 	    errorCode?: string;
 	    warning?: string;
 	    retryAfterMs?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ParseQueryResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.chips = this.convertValues(source["chips"], ChipDTO);
@@ -133,7 +133,7 @@ export namespace app {
 	        this.warning = source["warning"];
 	        this.retryAfterMs = source["retryAfterMs"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -163,11 +163,11 @@ export namespace app {
 	    endTime: number;
 	    score: number;
 	    modifiedAt: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SearchResultDTO(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.filePath = source["filePath"];
@@ -187,11 +187,11 @@ export namespace app {
 	    relaxationBanner?: string;
 	    errorCode?: string;
 	    retryAfterMs?: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SearchWithFiltersResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.results = this.convertValues(source["results"], SearchResultDTO);
@@ -199,7 +199,7 @@ export namespace app {
 	        this.errorCode = source["errorCode"];
 	        this.retryAfterMs = source["retryAfterMs"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;

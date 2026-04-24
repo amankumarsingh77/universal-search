@@ -180,6 +180,15 @@ export function useSearch() {
     runParseQuery(nlState.raw);
   }, [nlState.raw, runParseQuery]);
 
+  const forceSearch = useCallback(() => {
+    // Search-stage errors (ERR_RATE_LIMITED, ERR_EMBED_FAILED) must clear the
+    // errorCode gate so performSearch will actually issue the backend call.
+    setErrorCode('');
+    setRetryAfterMs(0);
+    errorCodeRef.current = '';
+    performSearch(nlState.raw, nlState.semanticQuery, nlState.chips, nlState.chipDenyList);
+  }, [nlState.raw, nlState.semanticQuery, nlState.chips, nlState.chipDenyList, performSearch]);
+
   // Effect for debounced search + parse query timer (triggered by raw query changes)
   useEffect(() => {
     const q = nlState.raw;
@@ -267,6 +276,7 @@ export function useSearch() {
     banner: nlState.banner,
     removeChip,
     forceParseQuery,
+    forceSearch,
     isOffline,
     errorCode,
     warning,

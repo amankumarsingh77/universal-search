@@ -526,6 +526,43 @@ func TestLLMParser_MaxRetriesFromConfig_Zero(t *testing.T) {
 	}
 }
 
+// TestParseWithRetry_AllDecodesFail_ReturnsGrammarSpec asserts that when every
+// attempt returns non-JSON text (all decode errors), the returned spec equals
+// the grammarSpec passed in, not the zero-value FilterSpec (REQ-004).
+func TestParseWithRetry_AllDecodesFail_ReturnsGrammarSpec(t *testing.T) {
+	callCount := 0
+	generate := func(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) (*genai.GenerateContentResponse, error) {
+		callCount++
+		return &genai.GenerateContentResponse{
+			Candidates: []*genai.Candidate{
+				{Content: &genai.Content{Parts: []*genai.Part{
+					{Text: "this is not valid json !!!"},
+				}}},
+			},
+		}, nil
+	}
+
+	grammarSpec := FilterSpec{SemanticQuery: "grammar fallback", Source: SourceGrammar}
+	p := buildFakeParser(generate)
+	result, err := p.parseWithRetry(context.Background(), "some query", grammarSpec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// All maxRetries+1 calls return bad JSON; grammarSpec must come back.
+	if result.Spec.SemanticQuery != "grammar fallback" {
+		t.Errorf("expected grammarSpec SemanticQuery='grammar fallback', got %q", result.Spec.SemanticQuery)
+	}
+	if result.Spec.Source != SourceGrammar {
+		t.Errorf("expected grammarSpec Source=%v, got %v", SourceGrammar, result.Spec.Source)
+	}
+	if result.Outcome != OutcomeOK {
+		t.Errorf("expected OutcomeOK, got %v", result.Outcome)
+	}
+	if callCount != p.maxRetries+1 {
+		t.Errorf("expected %d calls, got %d", p.maxRetries+1, callCount)
+	}
+}
+
 type alwaysAllowLimiter struct{}
 
 func (alwaysAllowLimiter) Allow() bool { return true }

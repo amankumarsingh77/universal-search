@@ -76,19 +76,6 @@ func TestGoldenEval(t *testing.T) {
 	overall := overallMean(scores)
 	t.Logf("overall score: %.3f (floor %.3f)", overall, GoldenEvalOverallFloor)
 
-	// RECORDING_BASELINE=1 bypasses the floor gate so we can capture a pre-change
-	// baseline even when overall score is below the floor.  This is a permanent
-	// code change; the gate is real for all normal CI runs.
-	if os.Getenv("RECORDING_BASELINE") != "1" && overall < GoldenEvalOverallFloor {
-		worst := topNWorst(cScores, 5)
-		ids := make([]string, len(worst))
-		for i, w := range worst {
-			ids[i] = fmt.Sprintf("%s(%.3f)", w.id, w.score)
-		}
-		t.Fatalf("overall score %.3f below floor %.3f; worst cases: %v",
-			overall, GoldenEvalOverallFloor, ids)
-	}
-
 	perCat := categoryScores(cases, scores)
 	baseline := loadBaseline(t, "testdata/golden_baseline.json")
 
@@ -101,6 +88,9 @@ func TestGoldenEval(t *testing.T) {
 		}
 	}
 
+	// Write updated baseline before the floor gate so UPDATE_GOLDEN_BASELINE=1
+	// can record a degraded baseline for diagnosis even when overall < floor
+	// (EDGE-014). The floor gate below still fails the test.
 	if os.Getenv("UPDATE_GOLDEN_BASELINE") == "1" {
 		writeBaseline(t, filepath.Join("testdata", "golden_baseline.json"), goldenBaseline{
 			Overall:     overall,
@@ -109,6 +99,19 @@ func TestGoldenEval(t *testing.T) {
 			Notes:       os.Getenv("UPDATE_GOLDEN_BASELINE_NOTES"),
 		})
 		t.Logf("baseline updated: overall=%.3f", overall)
+	}
+
+	// RECORDING_BASELINE=1 bypasses the floor gate so we can capture a pre-change
+	// baseline even when overall score is below the floor.  This is a permanent
+	// code change; the gate is real for all normal CI runs.
+	if os.Getenv("RECORDING_BASELINE") != "1" && overall < GoldenEvalOverallFloor {
+		worst := topNWorst(cScores, 5)
+		ids := make([]string, len(worst))
+		for i, w := range worst {
+			ids[i] = fmt.Sprintf("%s(%.3f)", w.id, w.score)
+		}
+		t.Fatalf("overall score %.3f below floor %.3f; worst cases: %v",
+			overall, GoldenEvalOverallFloor, ids)
 	}
 }
 
@@ -133,6 +136,10 @@ func TestGoldenFixtureShape(t *testing.T) {
 		default:
 			t.Errorf("case %s has unknown mode %q", c.ID, c.Mode)
 		}
+	}
+	// REQ-016, EDGE-013: fixture must contain exactly 200 cases.
+	if got := len(cases); got != 200 {
+		t.Fatalf("golden fixture must have exactly 200 cases, got %d", got)
 	}
 }
 

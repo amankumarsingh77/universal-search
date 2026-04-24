@@ -298,6 +298,7 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 	var lastSpec FilterSpec
 	var lastErr error
 	var lastRetryAfterMs int64
+	var haveDecoded bool
 	contents := []*genai.Content{
 		{Role: "user", Parts: []*genai.Part{{Text: query}}},
 	}
@@ -321,6 +322,10 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 		if decodeErr != nil {
 			p.logger.Debug("decode JSON response failed", "error", decodeErr, "attempt", attempt)
 			if attempt == maxRetries {
+				// No successful decode ever occurred; return grammarSpec per REQ-004.
+				if !haveDecoded {
+					return ParseResult{Spec: grammarSpec, Outcome: OutcomeOK}, nil
+				}
 				return ParseResult{Spec: lastSpec, Outcome: OutcomeOK}, nil
 			}
 			if resp != nil && len(resp.Candidates) > 0 && resp.Candidates[0].Content != nil {
@@ -334,6 +339,7 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 		}
 
 		lastSpec = spec
+		haveDecoded = true
 		if err := validateLLMResponse(query, spec); err == nil {
 			return ParseResult{Spec: spec, Outcome: OutcomeOK}, nil
 		} else {
@@ -351,7 +357,10 @@ func (p *LLMParser) parseWithRetry(ctx context.Context, query string, grammarSpe
 			})
 		}
 	}
-	// Exhausted retries without any successful response (all decode failures).
+	// Exhausted retries without any successful decode; return grammarSpec per REQ-004.
+	if !haveDecoded {
+		return ParseResult{Spec: grammarSpec, Outcome: OutcomeOK}, nil
+	}
 	return ParseResult{Spec: lastSpec, Outcome: OutcomeOK}, nil
 }
 

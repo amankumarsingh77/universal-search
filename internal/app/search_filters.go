@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"findo/internal/apperr"
+	"findo/internal/embedder"
 	"findo/internal/query"
 )
 
@@ -94,13 +95,13 @@ func (a *App) SearchWithFilters(raw string, semanticQuery string, denyList []str
 	}
 
 	a.logger.Debug("search_with_filters: embedding query", "query_text", queryText)
-	queryVec, err := a.getQueryVector(queryText)
+	queryVec, err := a.getQueryVector(emb, queryText)
 	if err != nil {
 		a.logger.Warn("search_with_filters: embedding failed", "error", err)
 		if errors.Is(err, apperr.ErrRateLimited) {
 			var retryAfterMs int64
-			if !emb.PausedUntil().IsZero() {
-				if remaining := time.Until(emb.PausedUntil()).Milliseconds(); remaining > 0 {
+			if pausedUntil := emb.PausedUntil(); !pausedUntil.IsZero() {
+				if remaining := time.Until(pausedUntil).Milliseconds(); remaining > 0 {
 					retryAfterMs = remaining
 				}
 			}
@@ -181,9 +182,11 @@ func (a *App) searchFilenameOnly(queryText string) (SearchWithFiltersResult, err
 	return SearchWithFiltersResult{Results: dtos}, nil
 }
 
-// getQueryVector embeds the query and caches the result.
-func (a *App) getQueryVector(queryText string) ([]float32, error) {
-	if a.embedder == nil {
+// getQueryVector embeds the query and caches the result. The embedder is
+// passed in so that error handling and PausedUntil() can be read from the same
+// snapshotted instance, avoiding races with concurrent SetGeminiAPIKey.
+func (a *App) getQueryVector(emb embedder.Embedder, queryText string) ([]float32, error) {
+	if emb == nil {
 		return nil, fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
 	}
 
@@ -198,7 +201,7 @@ func (a *App) getQueryVector(queryText string) ([]float32, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	vec, err := a.embedder.EmbedQuery(ctx, queryText)
+	vec, err := emb.EmbedQuery(ctx, queryText)
 	if err != nil {
 		return nil, err
 	}

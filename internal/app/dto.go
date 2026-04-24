@@ -42,7 +42,7 @@ type ParseQueryResult struct {
 // ErrorCode is set to a stable apperr code (e.g. "ERR_MODEL_MISMATCH") when the
 // backend detected a non-fatal condition the UI should surface; in that case
 // Results is empty and the method returns a nil Go error.
-// RetryAfterMs is populated when ErrorCode is ERR_QUERY_RATE_LIMITED so the
+// RetryAfterMs is populated when ErrorCode is ERR_RATE_LIMITED so the
 // frontend can show a countdown and retry automatically (REQ-021).
 type SearchWithFiltersResult struct {
 	Results          []SearchResultDTO `json:"results"`

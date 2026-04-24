@@ -30,6 +30,7 @@ function App() {
     banner,
     removeChip,
     forceParseQuery,
+    forceSearch,
     isOffline,
     errorCode,
     warning,
@@ -199,7 +200,11 @@ function App() {
       {errorCode === 'ERR_MODEL_MISMATCH' ? (
         <ReindexBanner errorCode={errorCode} />
       ) : errorCode ? (
-        <ErrorBanner code={errorCode} retryAfterMs={retryAfterMs} onRetry={forceParseQuery} />
+        <ErrorBanner
+          code={errorCode}
+          retryAfterMs={retryAfterMs}
+          onRetry={errorCode.startsWith('ERR_QUERY_') ? forceParseQuery : forceSearch}
+        />
       ) : null}
       <div style={styles.body}>
         {(() => {

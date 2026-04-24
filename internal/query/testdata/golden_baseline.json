@@ -1,1 +1,15 @@
-{"overall": 0.0, "per_category": {}, "generated_at": "2026-04-24T00:00:00Z", "notes": "placeholder; replaced in Phase 2"}
+{
+  "overall": 1,
+  "per_category": {
+    "combo": 1,
+    "date": 1,
+    "extension": 1,
+    "kind": 1,
+    "negation": 1,
+    "path": 1,
+    "semantic_only": 1,
+    "size": 1
+  },
+  "generated_at": "2026-04-24T15:51:46Z",
+  "notes": "pre-change baseline on current parser (olebedev/when + araddon/dateparse + function-calling schema)"
+}

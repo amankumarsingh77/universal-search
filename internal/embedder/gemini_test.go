@@ -3,11 +3,13 @@ package embedder
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
+	"findo/internal/apperr"
 	"google.golang.org/genai"
 )
 
@@ -334,5 +336,101 @@ func TestGeminiConfig_AppliedToEmbedder(t *testing.T) {
 	}
 	if e.Limiter().Allow() {
 		t.Fatal("Allow() #3 should be rejected — rate limit is 2/minute")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REQ-015 / EDGE-005: 429 terminal errors must satisfy errors.Is(apperr.ErrRateLimited)
+// ---------------------------------------------------------------------------
+
+// newFastEmbedder creates a test embedder with near-zero delays so tests run
+// without real backoff waits.
+func newFastEmbedder(doer embedFunc) *GeminiEmbedder {
+	e := newWithFunc(doer, 3, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	e.limiter = NewRateLimiter(1000, time.Minute)
+	e.initialDelay = 1 * time.Millisecond
+	e.maxDelay = 2 * time.Millisecond
+	return e
+}
+
+// TestEmbedQueryWrapsRateLimitedOn429 verifies that a 429 error with maxRetries=0
+// (single attempt) is returned wrapped as apperr.ErrRateLimited.
+func TestEmbedQueryWrapsRateLimitedOn429(t *testing.T) {
+	rateLimitErr := fmt.Errorf("googleapi: Error 429: rate limit exceeded")
+	doer := func(_ context.Context, _ string, _ []*genai.Content, _ *genai.EmbedContentConfig) ([][]float32, error) {
+		return nil, rateLimitErr
+	}
+
+	e := newFastEmbedder(doer)
+	e.maxRetries = 0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := e.EmbedQuery(ctx, "x")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !errors.Is(err, apperr.ErrRateLimited) {
+		t.Errorf("expected errors.Is(err, apperr.ErrRateLimited) == true, got false; err = %v", err)
+	}
+	if errors.Is(err, apperr.ErrEmbedFailed) {
+		t.Errorf("expected errors.Is(err, apperr.ErrEmbedFailed) == false, but it was true")
+	}
+	// Original cause must be preserved via Unwrap.
+	if !errors.Is(err, rateLimitErr) {
+		t.Errorf("expected original cause to be preserved via Unwrap, but errors.Is(err, rateLimitErr) is false")
+	}
+}
+
+// TestEmbedQueryGenericErrorNotRateLimited verifies that a non-429 error is NOT
+// wrapped as apperr.ErrRateLimited, and still propagates the original cause.
+func TestEmbedQueryGenericErrorNotRateLimited(t *testing.T) {
+	cause := fmt.Errorf("dial tcp: connection refused")
+	doer := func(_ context.Context, _ string, _ []*genai.Content, _ *genai.EmbedContentConfig) ([][]float32, error) {
+		return nil, cause
+	}
+
+	e := newFastEmbedder(doer)
+	e.maxRetries = 0
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := e.EmbedQuery(ctx, "x")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if errors.Is(err, apperr.ErrRateLimited) {
+		t.Errorf("expected errors.Is(err, apperr.ErrRateLimited) == false, got true")
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("expected original cause to be preserved, but errors.Is(err, cause) is false")
+	}
+}
+
+// TestEmbedQueryRateLimitedAfterRetriesExhausted verifies that the post-loop
+// exhaustion path wraps the last 429 error with apperr.ErrRateLimited.
+func TestEmbedQueryRateLimitedAfterRetriesExhausted(t *testing.T) {
+	rateLimitErr := fmt.Errorf("googleapi: Error 429: quota exceeded for project")
+	doer := func(_ context.Context, _ string, _ []*genai.Content, _ *genai.EmbedContentConfig) ([][]float32, error) {
+		return nil, rateLimitErr
+	}
+
+	e := newFastEmbedder(doer)
+	e.maxRetries = 1 // one retry, then exhausted
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := e.EmbedQuery(ctx, "x")
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !errors.Is(err, apperr.ErrRateLimited) {
+		t.Errorf("expected errors.Is(err, apperr.ErrRateLimited) == true, got false; err = %v", err)
+	}
+	if !errors.Is(err, rateLimitErr) {
+		t.Errorf("expected original cause to be preserved, but errors.Is(err, rateLimitErr) is false")
 	}
 }

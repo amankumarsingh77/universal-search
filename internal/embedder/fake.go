@@ -6,14 +6,16 @@ import (
 	"encoding/binary"
 	"math"
 	"math/rand"
+	"time"
 )
 
 // FakeEmbedder is a deterministic, network-free Embedder used in tests. Given
 // the same input it always returns the same unit-length vector, so cosine
 // similarity is meaningful.
 type FakeEmbedder struct {
-	model string
-	dims  int
+	model       string
+	dims        int
+	pausedUntil time.Time
 }
 
 var _ Embedder = (*FakeEmbedder)(nil)
@@ -28,6 +30,13 @@ func (f *FakeEmbedder) ModelID() string { return f.model }
 
 // Dimensions returns the configured embedding dimensionality.
 func (f *FakeEmbedder) Dimensions() int { return f.dims }
+
+// PausedUntil returns the configured pause deadline (zero if not paused).
+func (f *FakeEmbedder) PausedUntil() time.Time { return f.pausedUntil }
+
+// SetPausedUntil configures the pause deadline returned by PausedUntil.
+// Use in tests to simulate an active rate-limiter pause.
+func (f *FakeEmbedder) SetPausedUntil(t time.Time) { f.pausedUntil = t }
 
 // EmbedQuery returns the deterministic unit vector for text.
 func (f *FakeEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {

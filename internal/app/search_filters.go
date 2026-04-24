@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"findo/internal/apperr"
+	"findo/internal/embedder"
 	"findo/internal/query"
 )
 
@@ -95,10 +95,22 @@ func (a *App) SearchWithFilters(raw string, semanticQuery string, denyList []str
 	}
 
 	a.logger.Debug("search_with_filters: embedding query", "query_text", queryText)
-	queryVec, err := a.getQueryVector(queryText)
+	queryVec, err := a.getQueryVector(emb, queryText)
 	if err != nil {
-		a.logger.Warn("search_with_filters: embedding failed, falling back to filename search", "error", err)
-		return a.searchFilenameOnly(queryText)
+		a.logger.Warn("search_with_filters: embedding failed", "error", err)
+		if errors.Is(err, apperr.ErrRateLimited) {
+			var retryAfterMs int64
+			if pausedUntil := emb.PausedUntil(); !pausedUntil.IsZero() {
+				if remaining := time.Until(pausedUntil).Milliseconds(); remaining > 0 {
+					retryAfterMs = remaining
+				}
+			}
+			return SearchWithFiltersResult{
+				ErrorCode:    apperr.ErrRateLimited.Code,
+				RetryAfterMs: retryAfterMs,
+			}, nil
+		}
+		return SearchWithFiltersResult{ErrorCode: apperr.ErrEmbedFailed.Code}, nil
 	}
 	a.logger.Debug("search_with_filters: query embedded, running search engine",
 		"must", len(mergedSpec.Must),
@@ -106,17 +118,12 @@ func (a *App) SearchWithFilters(raw string, semanticQuery string, denyList []str
 		"should", len(mergedSpec.Should),
 	)
 
-	// Run SearchWithSpec; on network errors fall back to filename search.
+	// Run SearchWithSpec; surface typed errors to the caller.
 	searchResult, err := a.engine.SearchWithSpec(queryVec, mergedSpec, raw, 20)
 	if err != nil {
 		if errors.Is(err, apperr.ErrModelMismatch) {
 			a.logger.Warn("search: model mismatch, prompting user to reindex")
 			return SearchWithFiltersResult{ErrorCode: apperr.ErrModelMismatch.Code}, nil
-		}
-		if strings.Contains(strings.ToLower(err.Error()), "network") ||
-			strings.Contains(strings.ToLower(err.Error()), "embed") {
-			a.logger.Warn("vector search failed, falling back to filename search", "error", err)
-			return a.searchFilenameOnly(queryText)
 		}
 		return SearchWithFiltersResult{}, err
 	}
@@ -175,9 +182,11 @@ func (a *App) searchFilenameOnly(queryText string) (SearchWithFiltersResult, err
 	return SearchWithFiltersResult{Results: dtos}, nil
 }
 
-// getQueryVector embeds the query and caches the result.
-func (a *App) getQueryVector(queryText string) ([]float32, error) {
-	if a.embedder == nil {
+// getQueryVector embeds the query and caches the result. The embedder is
+// passed in so that error handling and PausedUntil() can be read from the same
+// snapshotted instance, avoiding races with concurrent SetGeminiAPIKey.
+func (a *App) getQueryVector(emb embedder.Embedder, queryText string) ([]float32, error) {
+	if emb == nil {
 		return nil, fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
 	}
 
@@ -192,7 +201,7 @@ func (a *App) getQueryVector(queryText string) ([]float32, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	vec, err := a.embedder.EmbedQuery(ctx, queryText)
+	vec, err := emb.EmbedQuery(ctx, queryText)
 	if err != nil {
 		return nil, err
 	}

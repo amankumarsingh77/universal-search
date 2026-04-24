@@ -198,21 +198,48 @@ func (a *App) ParseQuery(raw string) (ParseQueryResult, error) {
 			defer cancel()
 			llmStart := time.Now()
 			a.logger.Debug("parse_query: invoking LLM parser")
-			parsed, err := llmParser.Parse(ctx, raw, grammarSpec)
+			parseResult, parseErr := llmParser.Parse(ctx, raw, grammarSpec)
 			elapsed := time.Since(llmStart).Milliseconds()
 			if a.queryStats != nil {
 				a.queryStats.recordLLMCall(elapsed)
 			}
-			if err == nil {
-				llmSpec = parsed
-				a.logger.Debug("parse_query: LLM parse complete",
-					"latency_ms", elapsed,
-					"must", len(llmSpec.Must),
-					"must_not", len(llmSpec.MustNot),
-					"should", len(llmSpec.Should),
-				)
+			if parseErr != nil {
+				a.logger.Debug("parse_query: LLM parse failed (unexpected error), returning error code", "error", parseErr, "latency_ms", elapsed)
+				// parseErr is unexpected per interface contract; treat as OutcomeFailed — no cache write.
+				return ParseQueryResult{ErrorCode: apperr.ErrQueryParseFailed.Code}, nil
 			} else {
-				a.logger.Debug("parse_query: LLM parse failed, using grammar-only", "error", err, "latency_ms", elapsed)
+				switch parseResult.Outcome {
+				case query.OutcomeOK:
+					llmSpec = parseResult.Spec
+					a.logger.Debug("parse_query: LLM parse complete",
+						"latency_ms", elapsed,
+						"must", len(llmSpec.Must),
+						"must_not", len(llmSpec.MustNot),
+						"should", len(llmSpec.Should),
+					)
+				case query.OutcomeTimeout:
+					// Use grammar spec; set Warning; skip cache write below.
+					a.logger.Debug("parse_query: LLM parse timed out, using grammar-only", "latency_ms", elapsed)
+					mergedSpec = query.Merge(grammarSpec, grammarSpec, nil)
+					chips := buildChipDTOs(mergedSpec)
+					return ParseQueryResult{
+						Chips:         chips,
+						SemanticQuery: mergedSpec.SemanticQuery,
+						HasFilters:    len(mergedSpec.Must)+len(mergedSpec.MustNot)+len(mergedSpec.Should) > 0,
+						CacheHit:      false,
+						IsOffline:     offline,
+						Warning:       "query_parse_timeout",
+					}, nil
+				case query.OutcomeFailed:
+					a.logger.Debug("parse_query: LLM parse failed (terminal), returning error code", "latency_ms", elapsed)
+					return ParseQueryResult{ErrorCode: apperr.ErrQueryParseFailed.Code}, nil
+				case query.OutcomeRateLimited:
+					a.logger.Debug("parse_query: LLM parse rate-limited", "retry_after_ms", parseResult.RetryAfterMs, "latency_ms", elapsed)
+					return ParseQueryResult{
+						ErrorCode:    apperr.ErrQueryRateLimited.Code,
+						RetryAfterMs: parseResult.RetryAfterMs,
+					}, nil
+				}
 			}
 		}
 		mergedSpec = query.Merge(grammarSpec, llmSpec, nil)
@@ -223,6 +250,7 @@ func (a *App) ParseQuery(raw string) (ParseQueryResult, error) {
 			"semantic_query", mergedSpec.SemanticQuery,
 			"source", mergedSpec.Source,
 		)
+		// Only write to cache on successful (OK) outcome.
 		if a.parsedQueryCache != nil {
 			_ = a.parsedQueryCache.Set(raw, mergedSpec)
 			a.logger.Debug("parse_query: stored in cache")

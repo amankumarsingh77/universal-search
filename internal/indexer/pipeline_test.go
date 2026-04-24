@@ -56,10 +56,9 @@ type mockEmbedder struct {
 	blockCh chan struct{}
 }
 
-func (m *mockEmbedder) ModelID() string { return "mock" }
-
-func (m *mockEmbedder) Dimensions() int { return 3 }
-
+func (m *mockEmbedder) ModelID() string           { return "mock" }
+func (m *mockEmbedder) Dimensions() int           { return 3 }
+func (m *mockEmbedder) PausedUntil() time.Time    { return time.Time{} }
 func (m *mockEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return []float32{0, 0, 0}, nil
 }
@@ -1405,8 +1404,9 @@ func TestIndexFile_EmbedCountMismatch_IsWrapped(t *testing.T) {
 // countMismatchEmbedder returns one fewer vector than inputs, triggering a count mismatch.
 type countMismatchEmbedder struct{}
 
-func (c *countMismatchEmbedder) ModelID() string { return "mismatch-mock" }
-func (c *countMismatchEmbedder) Dimensions() int { return 3 }
+func (c *countMismatchEmbedder) ModelID() string        { return "mismatch-mock" }
+func (c *countMismatchEmbedder) Dimensions() int        { return 3 }
+func (c *countMismatchEmbedder) PausedUntil() time.Time { return time.Time{} }
 func (c *countMismatchEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return []float32{0, 0, 0}, nil
 }

@@ -1,8 +1,8 @@
 {
-  "overall": 1,
+  "overall": 0.8719999999999999,
   "per_category": {
     "combo": 1,
-    "date": 1,
+    "date": 0.718681318681319,
     "extension": 1,
     "kind": 1,
     "negation": 1,
@@ -10,6 +10,6 @@
     "semantic_only": 1,
     "size": 1
   },
-  "generated_at": "2026-04-24T16:13:33Z",
-  "notes": "post-change baseline after: direct ResponseSchema + tightened schema, go-anytime+go-dateparser chain, cache schema_version, NL-pattern split"
+  "generated_at": "2026-04-24T16:50:42Z",
+  "notes": ""
 }

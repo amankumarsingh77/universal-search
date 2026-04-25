@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"runtime"
 	"testing"
 
 	"golang.design/x/hotkey"
@@ -11,8 +12,8 @@ func TestParseHotkey_CmdSpace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(mods) != 1 || mods[0] != hotkey.ModCmd {
-		t.Fatalf("expected [ModCmd], got %v", mods)
+	if len(mods) != 1 || mods[0] != modCmd {
+		t.Fatalf("expected [modCmd], got %v", mods)
 	}
 	if key != hotkey.KeySpace {
 		t.Fatalf("expected KeySpace, got %v", key)
@@ -89,8 +90,8 @@ func TestParseHotkey_OptionModifier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(mods) != 1 || mods[0] != hotkey.ModOption {
-		t.Fatalf("expected [ModOption], got %v", mods)
+	if len(mods) != 1 || mods[0] != modAlt {
+		t.Fatalf("expected [modAlt], got %v", mods)
 	}
 	if key != hotkey.KeySpace {
 		t.Fatalf("expected KeySpace, got %v", key)
@@ -119,6 +120,9 @@ func TestParseHotkey_FunctionKeys(t *testing.T) {
 }
 
 func TestHumanReadableHotkey_CmdShiftSpace(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("HumanReadableHotkey output is platform-specific")
+	}
 	mods, key, err := ParseHotkey("cmd+shift+space")
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +134,9 @@ func TestHumanReadableHotkey_CmdShiftSpace(t *testing.T) {
 }
 
 func TestHumanReadableHotkey_CtrlShiftA(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("HumanReadableHotkey output is platform-specific")
+	}
 	mods, key, err := ParseHotkey("ctrl+shift+a")
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +148,9 @@ func TestHumanReadableHotkey_CtrlShiftA(t *testing.T) {
 }
 
 func TestHumanReadableHotkey_AltF1(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("HumanReadableHotkey output is platform-specific")
+	}
 	mods, key, err := ParseHotkey("alt+f1")
 	if err != nil {
 		t.Fatal(err)
@@ -156,8 +166,8 @@ func TestParseHotkey_CaseInsensitive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(mods) != 1 || mods[0] != hotkey.ModCmd {
-		t.Fatalf("expected [ModCmd], got %v", mods)
+	if len(mods) != 1 || mods[0] != modCmd {
+		t.Fatalf("expected [modCmd], got %v", mods)
 	}
 	if key != hotkey.KeySpace {
 		t.Fatalf("expected KeySpace, got %v", key)

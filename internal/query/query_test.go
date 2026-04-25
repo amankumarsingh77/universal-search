@@ -315,8 +315,8 @@ func TestParseSize_Units(t *testing.T) {
 		{"<500kb", OpLt, 500 * 1024, true},
 		{"<=2kb", OpLte, 2 * 1024, true},
 		{"=5mb", OpEq, 5 * 1024 * 1024, true},
-		{"500kb", OpGte, 500 * 1024, true},    // bare value → gte
-		{"1b", OpGte, 1, true},                 // bytes
+		{"500kb", OpGte, 500 * 1024, true}, // bare value → gte
+		{"1b", OpGte, 1, true},             // bytes
 		{"10TB", OpGte, 10 * 1024 * 1024 * 1024 * 1024, true},
 		{"notasize", "", 0, false},
 		{"", "", 0, false},
@@ -392,9 +392,9 @@ func TestShouldInvokeLLM_TableDriven(t *testing.T) {
 		{"meeting notes", false},
 		// Structured-token detection (REQ-008): short queries that the older
 		// heuristics missed but DetectStructuredFields catches.
-		{"all .py files", true},          // bare extension
-		{"videos over 100MB", true},      // size unit (also kind word)
-		{"files in Downloads", true},     // path root folder
+		{"all .py files", true},            // bare extension
+		{"videos over 100MB", true},        // size unit (also kind word)
+		{"files in Downloads", true},       // path root folder
 		{"PNG images", true},               // "images" plural matches "image" kind synonym
 		{"large documents over 1MB", true}, // size adjective + size unit + kind
 		// Over 500 chars → NO (tested separately)
@@ -448,18 +448,18 @@ func TestLevenshtein_Basic(t *testing.T) {
 
 func TestCorrectKind_Typo(t *testing.T) {
 	cases := []struct {
-		input    string
-		wantOut  string
-		wantOk   bool
+		input   string
+		wantOut string
+		wantOk  bool
 	}{
 		{"image", "image", true},
-		{"imgae", "image", true},   // transposition
-		{"imag", "image", true},    // deletion
-		{"imagee", "image", true},  // insertion
+		{"imgae", "image", true},  // transposition
+		{"imag", "image", true},   // deletion
+		{"imagee", "image", true}, // insertion
 		{"video", "video", true},
 		{"vido", "video", true},
 		{"audio", "audio", true},
-		{"xyz", "", false},         // too far
+		{"xyz", "", false}, // too far
 		{"code", "text", true},
 		{"pdf", "document", true},
 	}
@@ -487,8 +487,8 @@ func TestCorrectExtension_Typo(t *testing.T) {
 		wantOk  bool
 	}{
 		{"pdf", "pdf", true},
-		{"pef", "pdf", true},      // Levenshtein-1
-		{"pfd", "pdf", true},      // transposition
+		{"pef", "pdf", true}, // Levenshtein-1
+		{"pfd", "pdf", true}, // transposition
 		{"go", "go", true},
 		{"py", "py", true},
 		{"js", "js", true},
@@ -496,8 +496,8 @@ func TestCorrectExtension_Typo(t *testing.T) {
 		{"mp4", "mp4", true},
 		{"mp3", "mp3", true},
 		{"jpg", "jpg", true},
-		{"jpe", "jpg", true},      // deletion
-		{"xyz123", "", false},     // too far
+		{"jpe", "jpg", true},  // deletion
+		{"xyz123", "", false}, // too far
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {

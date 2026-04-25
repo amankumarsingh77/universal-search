@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"findo/internal/apperr"
+
 	"google.golang.org/genai"
 )
 
@@ -432,5 +433,20 @@ func TestEmbedQueryRateLimitedAfterRetriesExhausted(t *testing.T) {
 	}
 	if !errors.Is(err, rateLimitErr) {
 		t.Errorf("expected original cause to be preserved, but errors.Is(err, rateLimitErr) is false")
+	}
+}
+
+func newWithFunc(doer embedFunc, dims int32, logger *slog.Logger) *GeminiEmbedder {
+	def := DefaultGeminiConfig()
+	return &GeminiEmbedder{
+		doer:         doer,
+		model:        def.Model,
+		dims:         dims,
+		maxBatchSize: def.BatchSize,
+		maxRetries:   def.RetryMaxAttempts,
+		initialDelay: time.Duration(def.RetryInitialBackoffMs) * time.Millisecond,
+		maxDelay:     time.Duration(def.RetryMaxBackoffMs) * time.Millisecond,
+		limiter:      NewRateLimiter(def.RateLimitPerMinute, defaultRateWindow),
+		logger:       logger,
 	}
 }

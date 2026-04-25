@@ -16,7 +16,6 @@ import (
 	"findo/internal/vectorstore"
 )
 
-
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	s, err := store.NewStore(":memory:", slog.Default())
@@ -574,10 +573,10 @@ func TestOfflineMode_SearchReturnsFilenameResults(t *testing.T) {
 	a := newTestAppWithCache(t)
 	// Insert a file record so SearchFilenameContains can find it.
 	_, err := a.store.UpsertFile(store.FileRecord{
-		Path:      "/home/user/documents/report.pdf",
-		FileType:  "document",
-		Extension: ".pdf",
-		SizeBytes: 1024,
+		Path:       "/home/user/documents/report.pdf",
+		FileType:   "document",
+		Extension:  ".pdf",
+		SizeBytes:  1024,
 		ModifiedAt: time.Now(),
 	})
 	if err != nil {

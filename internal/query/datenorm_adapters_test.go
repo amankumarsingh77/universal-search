@@ -113,10 +113,10 @@ func TestChainOrder(t *testing.T) {
 	var callOrder []string
 
 	type tracingParser struct {
-		name      string
-		returnOK  bool
-		after     time.Time
-		before    time.Time
+		name     string
+		returnOK bool
+		after    time.Time
+		before   time.Time
 	}
 
 	makeTracer := func(name string, ok bool) dateParser {

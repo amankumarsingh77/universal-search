@@ -45,9 +45,9 @@ type IndexingConfig struct {
 
 // EmbedderConfig selects and configures the embedding provider.
 type EmbedderConfig struct {
-	Provider   string              `toml:"provider"`
-	Model      string              `toml:"model"`
-	Dimensions int                 `toml:"dimensions"`
+	Provider   string               `toml:"provider"`
+	Model      string               `toml:"model"`
+	Dimensions int                  `toml:"dimensions"`
 	Gemini     EmbedderGeminiConfig `toml:"gemini"`
 }
 

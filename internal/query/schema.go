@@ -82,4 +82,3 @@ var KnownKindValues = map[string]string{
 	"text":     "text",
 	"code":     "text",
 }
-

@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	videoChunkLen  = 30.0
-	videoOverlap   = 5.0
+	videoChunkLen = 30.0
+	videoOverlap  = 5.0
 )
 
 type videoTimeRange struct {

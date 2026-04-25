@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"findo/internal/apperr"
+
 	"google.golang.org/genai"
 )
 
@@ -170,24 +171,6 @@ func NewEmbedderFromEnv(dims int32, logger *slog.Logger) (*GeminiEmbedder, error
 		return nil, fmt.Errorf("embedder: GEMINI_API_KEY or GOOGLE_API_KEY must be set")
 	}
 	return NewEmbedder(key, dims, logger)
-}
-
-// newWithFunc builds a GeminiEmbedder with a caller-provided doer. Intended
-// for in-package tests that exercise the retry/batching paths without the
-// genai SDK.
-func newWithFunc(doer embedFunc, dims int32, logger *slog.Logger) *GeminiEmbedder {
-	def := DefaultGeminiConfig()
-	return &GeminiEmbedder{
-		doer:         doer,
-		model:        def.Model,
-		dims:         dims,
-		maxBatchSize: def.BatchSize,
-		maxRetries:   def.RetryMaxAttempts,
-		initialDelay: time.Duration(def.RetryInitialBackoffMs) * time.Millisecond,
-		maxDelay:     time.Duration(def.RetryMaxBackoffMs) * time.Millisecond,
-		limiter:      NewRateLimiter(def.RateLimitPerMinute, defaultRateWindow),
-		logger:       logger,
-	}
 }
 
 func isRetryable(err error) bool {

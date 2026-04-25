@@ -387,4 +387,3 @@ func (p *LLMParser) Parse(ctx context.Context, query string, grammarSpec FilterS
 	}
 	return p.parseWithRetry(ctx, query, grammarSpec)
 }
-

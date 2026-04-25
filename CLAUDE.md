@@ -52,7 +52,64 @@ Runtime tuning lives in `config.toml` — indexing concurrency, embedder batch s
 
 Error codes surfaced across the Wails boundary are defined in `internal/apperr/`; the frontend translates them via `frontend/src/lib/errorLabels.ts`. Never pattern-match on error messages — use codes.
 
-## Rules
+## Go Coding Standards
+
+### Error Handling
+
+- Use `apperr.Error` for all application errors. Never `errors.New()` for user-facing errors.
+- Wrap with `apperr.Wrap(code, message, cause)`. Frontend maps code to user-facing message via `frontend/src/lib/errorLabels.ts`.
+- Use `%w` in `fmt.Errorf` when callers should inspect the cause with `errors.Is`/`errors.As`. Use `%v` to obfuscate.
+- Never log AND return the same error. Choose one: log and degrade, or wrap and return.
+- Handle errors first (early return). Normal code stays at minimal indentation. No `else` after error returns.
+- Error strings lowercase, no trailing punctuation.
+- Never pattern-match on error messages — use `appErr.Code`, `errors.Is`, or `errors.As`.
+
+### Concurrency
+
+- Every goroutine must have a predictable stop mechanism: `context.Context` cancellation, `errgroup.Group`, or done channel.
+- Channel buffer size: 0 (unbuffered) or 1. Larger needs a comment explaining why.
+- Use `chan struct{}` for signaling, not `chan bool`.
+- Mutexes: named fields (`mu sync.RWMutex`), never embedded in structs.
+- Copy slices/maps at goroutine boundaries to prevent data races.
+- Zero-value mutexes are valid: `var mu sync.Mutex`. Don't use `new()`.
+
+### Context
+
+- `context.Context` as first parameter: `func F(ctx context.Context, ...)`.
+- Never store `context.Context` in struct fields. Pass as parameter to every method.
+- Exception: methods implementing standard library interfaces (e.g., `io.Reader`).
+
+### Naming
+
+- MixedCaps: `MaxLength` (exported), `maxLength` (unexported). Never underscores.
+- Initialisms: `URL`, `HTTP`, `ID` uppercase throughout (`ServeHTTP`, `userID`, `ModelID`).
+- Getters: `Owner()` not `GetOwner()`.
+- Interfaces: `-er` suffix for single-method: `Reader`, `Writer`, `Embedder`.
+- Receiver names: 1-2 letters, consistent. Never `this`, `self`, `me`.
+- Package names: lowercase, single word. Never `util`, `common`, `helpers`.
+
+### Structure
+
+- Interfaces belong in the consuming package. Producers return concrete types.
+- One file per concern, not one file per type.
+- Production `.go` files in `internal/app/` must stay under 400 lines.
+- Doc comments on ALL exported names: `// Name does the thing.`
+- Package comment immediately above `package` clause, no blank line.
+
+### Testing
+
+- Table-driven tests with `t.Run(name, ...)`. Anonymous structs with `name`, `want`, `wantErr`.
+- `t.Helper()` in test helpers. `t.Setenv()` for test isolation.
+- Run with `-race`: `go test -race ./...` or `make test-race`.
+- Prefer `require` for critical assertions, `assert` for non-critical.
+
+### Performance
+
+- `strconv` over `fmt.Sprintf` for primitives. `strings.Builder` for loop concatenation.
+- Preallocate capacity: `make([]T, 0, expectedSize)`.
+- Profile before optimizing. Don't guess.
+
+## Project Rules
 
 - **Verify APIs before coding.** Use Context7 MCP (`resolve-library-id` then `query-docs`) or fetch official docs to confirm signatures — don't rely on memory.
 - **Pure Go, no CGO** unless truly unavoidable. Critical for cross-platform builds.

@@ -38,6 +38,10 @@ jobs:
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
 
+      # go:embed all:frontend/dist requires the directory to exist.
+      - name: Create placeholder frontend dist
+        run: mkdir -p frontend/dist
+
       - name: go vet
         run: go vet -tags webkit2_41 ./...
 

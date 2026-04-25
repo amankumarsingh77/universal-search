@@ -20,14 +20,14 @@ type Store struct {
 
 // FileRecord represents a file tracked by the indexer.
 type FileRecord struct {
-	ID           int64
-	Path         string
-	FileType     string
-	Extension    string
-	SizeBytes    int64
-	ModifiedAt   time.Time
-	IndexedAt    time.Time
-	ContentHash  string
+	ID            int64
+	Path          string
+	FileType      string
+	Extension     string
+	SizeBytes     int64
+	ModifiedAt    time.Time
+	IndexedAt     time.Time
+	ContentHash   string
 	ThumbnailPath string
 }
 

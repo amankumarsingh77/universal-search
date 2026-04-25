@@ -10,7 +10,9 @@
   },
   "lint-staged": {
     "*.go": [
-      "golangci-lint run --fix"
+      "goimports -w .",
+      "go vet ./...",
+      "staticcheck -tests=false -go 1.26 ./..."
     ],
     "frontend/src/**/*.{ts,tsx}": [
       "bash -c 'cd frontend && npx eslint --fix \"$@\"' --"

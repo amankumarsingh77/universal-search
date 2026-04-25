@@ -21,7 +21,7 @@ type FailureEntry struct {
 // FailureGroup aggregates failures by error code for display.
 type FailureGroup struct {
 	Code        string
-	Label       string   // apperr.Error.Message for the code, or the code itself for unknown codes (EDGE-012)
+	Label       string // apperr.Error.Message for the code, or the code itself for unknown codes (EDGE-012)
 	Count       int
 	SampleFiles []string // up to 3 paths
 }

@@ -1,6 +1,18 @@
+# NOTE: golangci-lint v1.64.8 is incompatible with Go 1.26.0.
+# It goes into a CPU-bound loop consuming 1GB+ RAM per file due to
+# the type-checker in golang.org/x/tools not supporting Go 1.26.
+#
+# We use standalone tools instead (go vet, staticcheck, errcheck, goimports).
+# See Makefile lint-go target and .husky/pre-commit for the active config.
+#
+# This file is kept as a reference for when golangci-lint v2 supports Go 1.26.
+# Rule: check go version compatibility before re-enabling: golangci-lint --version
+# must show "built with go1.26" or later.
+
 run:
   timeout: 5m
   go: "1.24"
+  concurrency: 4
 
 linters:
   enable:
@@ -17,19 +29,55 @@ linters:
     - prealloc
     - unconvert
     - gofmt
+    - errorlint
+    - nilerr
+    - nolintlint
+    - reassign
+    - noctx
+    - containedctx
+    - copyloopvar
+    - intrange
 
 linters-settings:
   govet:
-    enable-all: true
-    disable:
-      - fieldalignment
+    # Explicit list instead of enable-all to keep memory under control.
+    # enable-all runs ~30 analyzers — one per check — and with 14 packages
+    # the combinatoric memory cost exceeds 8 GB. Hand-pick only what matters.
+    enable:
+      - assign
+      - atomic
+      - bools
+      - buildtag
+      - composites
+      - copylocks
+      - errorsas
+      - httpresponse
+      - loopclosure
+      - lostcancel
+      - nilfunc
+      - printf
+      - shadow
+      - shift
+      - sortslice
+      - stdmethods
+      - stringintconv
+      - structtag
+      - testinggoroutine
+      - tests
+      - timeformat
+      - unmarshal
+      - unreachable
+      - unsafepointer
+      - unusedresult
   gocritic:
     enabled-tags:
       - diagnostic
       - style
-      - performance
+    # performance tag omitted intentionally — it doubles memory usage via
+    # deep expression-cost analysis on every call site.
     disabled-checks:
       - hugeParam
+      - unnamedResult
   gosec:
     excludes:
       - G204 # subprocess calls — we use ffmpeg intentionally
@@ -37,7 +85,28 @@ linters-settings:
   revive:
     rules:
       - name: exported
-        disabled: true
+        disabled: false
+        arguments:
+          - sayRepetitiveInsteadOfStutters
+          - checkPrivateReceivers
+          - disableStutteringCheck
+      - name: context-as-argument
+        disabled: false
+      - name: defer
+        disabled: false
+      - name: import-shadowing
+        disabled: false
+      - name: empty-block
+        disabled: false
+      - name: range-val-address
+        disabled: false
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+  nolintlint:
+    require-explanation: true
+    require-specific: true
 
 issues:
   exclude-dirs:

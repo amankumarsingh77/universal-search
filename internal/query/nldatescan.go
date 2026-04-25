@@ -92,9 +92,7 @@ func trimDateEdgeNoise(s string) string {
 	s = strings.TrimRight(s, ".,;:!?")
 	// Leading connective words we can safely drop.
 	for _, p := range []string{"from ", "on ", "at ", "of ", "in ", "during ", "dated ", "created ", "modified ", "created in ", "created on "} {
-		if strings.HasPrefix(s, p) {
-			s = strings.TrimPrefix(s, p)
-		}
+		s = strings.TrimPrefix(s, p)
 	}
 	// Trailing 's from possessives ("last week's" → "last week").
 	s = strings.TrimSuffix(s, "'s")

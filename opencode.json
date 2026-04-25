@@ -1,0 +1,21 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [
+    "CLAUDE.md",
+    ".opencode/agents/go-review.md"
+  ],
+  "agent": {
+    "go-review": {
+      "mode": "subagent",
+      "temperature": 0.1,
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    }
+  },
+  "permission": {
+    "edit": "allow",
+    "bash": "allow"
+  }
+}

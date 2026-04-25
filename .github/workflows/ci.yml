@@ -35,12 +35,14 @@ jobs:
             libayatana-appindicator3-dev \
             libx11-dev
 
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.64.8
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
 
       - name: go vet
         run: go vet -tags webkit2_41 ./...
+
+      - name: staticcheck
+        run: staticcheck -tests=false -go 1.26 -tags webkit2_41 ./...
 
       - name: go test
         run: go test -tags webkit2_41 ./...

@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	sniffSize      = 8192
-	maxTextBytes   = 8000
-	textChunkSize  = 2000
+	sniffSize        = 8192
+	maxTextBytes     = 8000
+	textChunkSize    = 2000
 	textChunkOverlap = 200
 )
 

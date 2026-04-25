@@ -56,9 +56,9 @@ type mockEmbedder struct {
 	blockCh chan struct{}
 }
 
-func (m *mockEmbedder) ModelID() string           { return "mock" }
-func (m *mockEmbedder) Dimensions() int           { return 3 }
-func (m *mockEmbedder) PausedUntil() time.Time    { return time.Time{} }
+func (m *mockEmbedder) ModelID() string        { return "mock" }
+func (m *mockEmbedder) Dimensions() int        { return 3 }
+func (m *mockEmbedder) PausedUntil() time.Time { return time.Time{} }
 func (m *mockEmbedder) EmbedQuery(_ context.Context, _ string) ([]float32, error) {
 	return []float32{0, 0, 0}, nil
 }
@@ -1312,12 +1312,12 @@ func TestIndexFile_FailurePathsAreWrapped(t *testing.T) {
 	}
 
 	cases := []struct {
-		name         string
-		embedErr     error
-		wantCode     string
+		name     string
+		embedErr error
+		wantCode string
 	}{
 		{
-			name:     "quota exhausted → ErrRateLimited",
+			name: "quota exhausted → ErrRateLimited",
 			// The existing quota error string that isQuotaExhaustedError detected.
 			embedErr: fmt.Errorf("all keys exhausted"),
 			wantCode: apperr.ErrRateLimited.Code,

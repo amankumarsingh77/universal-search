@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -238,9 +239,12 @@ func TestGetHotkeyString_CustomHotkey(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := a.GetHotkeyString()
-	// ctrl+shift+space should produce ⌃⇧Space
-	if got != "⌃⇧Space" {
-		t.Errorf("expected ⌃⇧Space, got %q", got)
+	expected := "Ctrl+Shift+Space"
+	if runtime.GOOS == "darwin" {
+		expected = "⌃⇧Space"
+	}
+	if got != expected {
+		t.Errorf("expected %q, got %q", expected, got)
 	}
 }
 

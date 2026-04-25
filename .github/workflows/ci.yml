@@ -38,9 +38,12 @@ jobs:
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
 
-      # go:embed all:frontend/dist requires the directory to exist.
-      - name: Create placeholder frontend dist
-        run: mkdir -p frontend/dist
+      # main.go contains //go:embed all:frontend/dist, which needs at least
+      # one non-hidden file in the directory. Empty dirs fail compilation.
+      # This placeholder is overwritten by wails build in release; in CI it
+      # exists solely to satisfy the embed directive for vet/test/build.
+      - name: Create frontend/dist placeholder
+        run: mkdir -p frontend/dist && echo '<!doctype html><title>findo</title>' > frontend/dist/index.html
 
       - name: go vet
         run: go vet -tags webkit2_41 ./...

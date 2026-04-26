@@ -43,6 +43,30 @@ func ApplyWithBackfill(db *sql.DB, logger *slog.Logger, backfill BackfillFunc) e
 	return applyFS(db, logger, migrationsFS, migrationsDir, backfill)
 }
 
+// fts5MigrationVersion is the schema version that creates the FTS5 virtual
+// table. If FTS5 is not available in the current build, this migration is
+// skipped and stamped so subsequent Apply calls do not attempt it.
+const fts5MigrationVersion = 7
+
+// probeFTS5 checks whether the FTS5 extension is available by trying to
+// create a transient virtual table inside a SAVEPOINT. Returns true when
+// FTS5 is present, false when the attempt fails.
+func probeFTS5(db *sql.DB) bool {
+	_, err := db.Exec(`SAVEPOINT probe_fts5`)
+	if err != nil {
+		return false
+	}
+	_, createErr := db.Exec(`CREATE VIRTUAL TABLE temp.probe_fts5_tbl USING fts5(x)`)
+	if createErr != nil {
+		_, _ = db.Exec(`ROLLBACK TO probe_fts5`)
+		_, _ = db.Exec(`RELEASE probe_fts5`)
+		return false
+	}
+	_, _ = db.Exec(`DROP TABLE IF EXISTS temp.probe_fts5_tbl`)
+	_, _ = db.Exec(`RELEASE probe_fts5`)
+	return true
+}
+
 // applyFS is the internal entry point parameterised by the source FS so tests
 // can inject a fixture directory of failing migrations.
 func applyFS(db *sql.DB, logger *slog.Logger, src fs.FS, dir string, backfill BackfillFunc) error {
@@ -70,6 +94,10 @@ func applyFS(db *sql.DB, logger *slog.Logger, src fs.FS, dir string, backfill Ba
 	migrations := make([]migration, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		// Skip rollback (down) migration files — only forward migrations are applied.
+		if strings.HasSuffix(e.Name(), ".down.sql") {
 			continue
 		}
 		v, err := parseVersion(e.Name())
@@ -109,9 +137,29 @@ func applyFS(db *sql.DB, logger *slog.Logger, src fs.FS, dir string, backfill Ba
 		}
 	}
 
+	// Probe FTS5 availability once before the migration loop so we can decide
+	// whether to skip migration 007. The probe is cheap and only happens when
+	// FTS5 migration has not yet been applied.
+	fts5Available := true
+	if !applied[fts5MigrationVersion] {
+		fts5Available = probeFTS5(db)
+		if !fts5Available {
+			logger.Warn("FTS5 extension not available; skipping filename FTS migration — filename search will use LIKE fallback")
+		}
+	}
+
 	appliedThisRun := make(map[int]bool)
 	for _, m := range migrations {
 		if applied[m.version] {
+			continue
+		}
+		// Skip the FTS5 migration when the extension is absent. Stamp it as
+		// applied so future Apply calls do not retry it.
+		if m.version == fts5MigrationVersion && !fts5Available {
+			if err := stamp(db, m.version); err != nil {
+				return fmt.Errorf("stamp skipped FTS5 migration: %w", err)
+			}
+			logger.Info("stamped FTS5 migration as skipped", "version", m.version)
 			continue
 		}
 		body, err := fs.ReadFile(src, dir+"/"+m.name)
@@ -131,6 +179,92 @@ func applyFS(db *sql.DB, logger *slog.Logger, src fs.FS, dir string, backfill Ba
 		}
 	}
 
+	// EDGE-4: Run the derived-column backfill in 5k-row batches when migration
+	// 006 was applied during this call. Each batch runs in its own transaction
+	// so WAL writers can interleave between batches on large existing databases.
+	if appliedThisRun[6] {
+		if err := backfill006(db, logger); err != nil {
+			return fmt.Errorf("backfill after migration 006: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// backfill006BatchSize is the number of rows updated per transaction in
+// backfill006. 5000 rows keeps each WAL transaction short while still being
+// large enough to amortise transaction overhead.
+const backfill006BatchSize = 5000
+
+// backfill006 populates the basename, parent, and stem columns for all existing
+// rows in the files table. It runs in batches of backfill006BatchSize rows,
+// each in its own transaction, so that WAL writers can interleave on large
+// databases (EDGE-4).
+//
+// The path decomposition uses the same SQLite string-function formula documented
+// in 006_file_derived_columns.up.sql.
+func backfill006(db *sql.DB, logger *slog.Logger) error {
+	const batchSQL = `
+UPDATE files
+SET
+  basename = substr(path,
+               length(rtrim(path, replace(path, '/', ''))) + 1),
+
+  parent   = CASE
+               WHEN instr(path, '/') = 0
+               THEN ''
+               WHEN length(rtrim(path, replace(path, '/', ''))) = 1
+               THEN '/'
+               ELSE substr(path, 1,
+                      length(rtrim(path, replace(path, '/', ''))) - 1)
+             END,
+
+  stem     = (
+    WITH bn(v) AS (
+      SELECT substr(path, length(rtrim(path, replace(path, '/', ''))) + 1)
+    )
+    SELECT CASE
+             WHEN instr(v, '.') <= 1
+             THEN v
+             ELSE substr(v, 1, length(rtrim(v, replace(v, '.', ''))) - 1)
+           END
+    FROM bn
+  )
+
+WHERE id IN (
+  SELECT id FROM files WHERE basename = '' LIMIT ?
+)`
+
+	total := 0
+	for {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin backfill006 batch: %w", err)
+		}
+		res, err := tx.Exec(batchSQL, backfill006BatchSize)
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("execute backfill006 batch: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("rows affected backfill006 batch: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit backfill006 batch: %w", err)
+		}
+		total += int(n)
+		if total > 0 && total%50000 == 0 {
+			logger.Info("migration 006 backfill progress", "rows_done", total)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if total > 0 {
+		logger.Info("migration 006 backfill complete", "rows_updated", total)
+	}
 	return nil
 }
 

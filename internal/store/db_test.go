@@ -1312,6 +1312,183 @@ func TestInsertChunk_WritesEmbeddingModelAndDims(t *testing.T) {
 	}
 }
 
+// --- Phase 1 (filename search): derived column tests ---
+
+// TestUpsertFile_PopulatesDerivedCols verifies that UpsertFile writes basename,
+// parent, and stem for a new file and keeps them accurate on update.
+func TestUpsertFile_PopulatesDerivedCols(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	tests := []struct {
+		name         string
+		path         string
+		wantBasename string
+		wantParent   string
+		wantStem     string
+	}{
+		{
+			name:         "normal path",
+			path:         "/home/user/documents/report.pdf",
+			wantBasename: "report.pdf",
+			wantParent:   "/home/user/documents",
+			wantStem:     "report",
+		},
+		{
+			name:         "multi-dot extension",
+			path:         "/opt/backups/data.tar.gz",
+			wantBasename: "data.tar.gz",
+			wantParent:   "/opt/backups",
+			wantStem:     "data.tar",
+		},
+		{
+			name:         "no extension",
+			path:         "/usr/bin/grep",
+			wantBasename: "grep",
+			wantParent:   "/usr/bin",
+			wantStem:     "grep",
+		},
+	}
+
+	now := time.Now()
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := s.UpsertFile(FileRecord{
+				Path: tc.path, FileType: "text", Extension: ".txt",
+				SizeBytes: 100, ModifiedAt: now, IndexedAt: now,
+			})
+			if err != nil {
+				t.Fatalf("UpsertFile: %v", err)
+			}
+
+			got, err := s.GetFileByID(id)
+			if err != nil {
+				t.Fatalf("GetFileByID: %v", err)
+			}
+			if got.Basename != tc.wantBasename {
+				t.Errorf("Basename = %q, want %q", got.Basename, tc.wantBasename)
+			}
+			if got.Parent != tc.wantParent {
+				t.Errorf("Parent = %q, want %q", got.Parent, tc.wantParent)
+			}
+			if got.Stem != tc.wantStem {
+				t.Errorf("Stem = %q, want %q", got.Stem, tc.wantStem)
+			}
+		})
+	}
+}
+
+// TestUpsertFile_UpdatesDerivedCols verifies that a conflict-update (same path)
+// recomputes derived columns when the path key remains the same.  Since path
+// drives derived cols and can't change on an upsert-by-path, this mainly
+// confirms idempotency — cols are written (not left stale) on every upsert.
+func TestUpsertFile_UpdatesDerivedCols(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	path := "/home/user/notes.txt"
+
+	id1, err := s.UpsertFile(FileRecord{
+		Path: path, FileType: "text", Extension: ".txt",
+		SizeBytes: 100, ModifiedAt: now, IndexedAt: now, ContentHash: "v1",
+	})
+	if err != nil {
+		t.Fatalf("first UpsertFile: %v", err)
+	}
+
+	// Second upsert updates content_hash; derived cols must still be correct.
+	id2, err := s.UpsertFile(FileRecord{
+		Path: path, FileType: "text", Extension: ".txt",
+		SizeBytes: 200, ModifiedAt: now, IndexedAt: now, ContentHash: "v2",
+	})
+	if err != nil {
+		t.Fatalf("second UpsertFile: %v", err)
+	}
+	if id1 != id2 {
+		t.Fatalf("expected same ID on upsert, got %d and %d", id1, id2)
+	}
+
+	got, err := s.GetFileByID(id1)
+	if err != nil {
+		t.Fatalf("GetFileByID: %v", err)
+	}
+	if got.Basename != "notes.txt" {
+		t.Errorf("Basename = %q, want %q", got.Basename, "notes.txt")
+	}
+	if got.Parent != "/home/user" {
+		t.Errorf("Parent = %q, want %q", got.Parent, "/home/user")
+	}
+	if got.Stem != "notes" {
+		t.Errorf("Stem = %q, want %q", got.Stem, "notes")
+	}
+}
+
+// TestRenameFile_UpdatesDerivedCols verifies that RenameFile updates path and
+// all three derived columns correctly.
+func TestRenameFile_UpdatesDerivedCols(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now()
+	oldPath := "/home/user/old_name.txt"
+	newPath := "/home/user/archive/data.tar.gz"
+
+	id, err := s.UpsertFile(FileRecord{
+		Path: oldPath, FileType: "text", Extension: ".txt",
+		SizeBytes: 100, ModifiedAt: now, IndexedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("UpsertFile: %v", err)
+	}
+
+	if err := s.RenameFile(oldPath, newPath); err != nil {
+		t.Fatalf("RenameFile: %v", err)
+	}
+
+	got, err := s.GetFileByID(id)
+	if err != nil {
+		t.Fatalf("GetFileByID after rename: %v", err)
+	}
+	if got.Path != newPath {
+		t.Errorf("Path = %q, want %q", got.Path, newPath)
+	}
+	if got.Basename != "data.tar.gz" {
+		t.Errorf("Basename = %q, want %q", got.Basename, "data.tar.gz")
+	}
+	if got.Parent != "/home/user/archive" {
+		t.Errorf("Parent = %q, want %q", got.Parent, "/home/user/archive")
+	}
+	if got.Stem != "data.tar" {
+		t.Errorf("Stem = %q, want %q", got.Stem, "data.tar")
+	}
+}
+
+// TestRenameFile_NonExistentPath verifies that RenameFile returns an error when
+// oldPath does not match any row.
+func TestRenameFile_NonExistentPath(t *testing.T) {
+	s, err := NewStore(":memory:", testLogger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	err = s.RenameFile("/no/such/file.txt", "/other/path.txt")
+	if err == nil {
+		t.Fatal("expected error for non-existent old path, got nil")
+	}
+}
+
 // TestStore_ModelsInIndex_ReportsDistinctModels (REF-065): ModelsInIndex
 // returns the distinct embedding_model values seen across chunks.
 func TestStore_ModelsInIndex_ReportsDistinctModels(t *testing.T) {

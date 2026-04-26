@@ -14,8 +14,9 @@ import (
 
 // Store wraps a SQLite database for file and chunk metadata.
 type Store struct {
-	db     *sql.DB
-	logger *slog.Logger
+	db                 *sql.DB
+	logger             *slog.Logger
+	filenameFTSReady   bool // true when the filename_search FTS5 table exists
 }
 
 // FileRecord represents a file tracked by the indexer.
@@ -29,6 +30,10 @@ type FileRecord struct {
 	IndexedAt     time.Time
 	ContentHash   string
 	ThumbnailPath string
+	// Derived columns — populated by migration 006 and maintained by UpsertFile/RenameFile.
+	Basename string // filename component (e.g. "report.pdf")
+	Parent   string // directory portion without trailing slash (e.g. "/docs")
+	Stem     string // basename minus last dot-extension (e.g. "report")
 }
 
 // ChunkRecord represents a chunk of a file (e.g., a time segment of video/audio).
@@ -89,8 +94,12 @@ func NewStoreWithBackfill(dsn string, logger *slog.Logger, backfill BackfillFunc
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
-	log.Info("database ready")
-	return &Store{db: db, logger: log}, nil
+	// Determine at runtime whether the FTS5 table was actually created
+	// (it may have been skipped when FTS5 is unavailable in the build).
+	ftsReady := hasFTSTable(db)
+
+	log.Info("database ready", "filenameFTS", ftsReady)
+	return &Store{db: db, logger: log, filenameFTSReady: ftsReady}, nil
 }
 
 // Close checkpoints the WAL and closes the underlying database connection.
@@ -100,10 +109,13 @@ func (s *Store) Close() error {
 }
 
 // UpsertFile inserts or updates a file record by path. Returns the file ID.
+// The basename, parent, and stem derived columns are computed from path via
+// PathParts and stored automatically; callers need not populate them.
 func (s *Store) UpsertFile(f FileRecord) (int64, error) {
+	basename, parent, stem := PathParts(f.Path)
 	res, err := s.db.Exec(`
-		INSERT INTO files (path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO files (path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path, basename, parent, stem)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			file_type      = excluded.file_type,
 			extension      = excluded.extension,
@@ -111,8 +123,12 @@ func (s *Store) UpsertFile(f FileRecord) (int64, error) {
 			modified_at    = excluded.modified_at,
 			indexed_at     = excluded.indexed_at,
 			content_hash   = excluded.content_hash,
-			thumbnail_path = excluded.thumbnail_path
-	`, f.Path, f.FileType, f.Extension, f.SizeBytes, f.ModifiedAt, f.IndexedAt, f.ContentHash, f.ThumbnailPath)
+			thumbnail_path = excluded.thumbnail_path,
+			basename       = excluded.basename,
+			parent         = excluded.parent,
+			stem           = excluded.stem
+	`, f.Path, f.FileType, f.Extension, f.SizeBytes, f.ModifiedAt, f.IndexedAt, f.ContentHash, f.ThumbnailPath,
+		basename, parent, stem)
 	if err != nil {
 		return 0, fmt.Errorf("upsert file: %w", err)
 	}
@@ -137,9 +153,10 @@ func (s *Store) UpsertFile(f FileRecord) (int64, error) {
 func (s *Store) GetFileByPath(path string) (FileRecord, error) {
 	var f FileRecord
 	err := s.db.QueryRow(`
-		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path, basename, parent, stem
 		FROM files WHERE path = ?
-	`, path).Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes, &f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath)
+	`, path).Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes, &f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath,
+		&f.Basename, &f.Parent, &f.Stem)
 	if err != nil {
 		return f, fmt.Errorf("get file by path: %w", err)
 	}
@@ -192,6 +209,7 @@ func (s *Store) GetChunksByVectorIDs(vectorIDs []string) ([]SearchResult, error)
 
 	query := fmt.Sprintf(`
 		SELECT f.id, f.path, f.file_type, f.extension, f.size_bytes, f.modified_at, f.indexed_at, f.content_hash, f.thumbnail_path,
+		       f.basename, f.parent, f.stem,
 		       c.id, c.vector_id, c.start_time, c.end_time, c.embedding_model
 		FROM chunks c
 		JOIN files f ON f.id = c.file_id
@@ -211,6 +229,7 @@ func (s *Store) GetChunksByVectorIDs(vectorIDs []string) ([]SearchResult, error)
 			&r.File.ID, &r.File.Path, &r.File.FileType, &r.File.Extension,
 			&r.File.SizeBytes, &r.File.ModifiedAt, &r.File.IndexedAt,
 			&r.File.ContentHash, &r.File.ThumbnailPath,
+			&r.File.Basename, &r.File.Parent, &r.File.Stem,
 			&r.ChunkID, &r.VectorID, &r.StartTime, &r.EndTime, &r.EmbeddingModel,
 		)
 		if err != nil {
@@ -283,6 +302,29 @@ func (s *Store) RemoveFileByPath(path string) ([]string, error) {
 
 	s.logger.Info("removed file", "path", path, "vectors", len(vecIDs))
 	return vecIDs, nil
+}
+
+// RenameFile updates the path and derived columns for a file record.
+// It also updates all chunk rows that reference the file. Returns an error
+// if no file with oldPath exists.
+func (s *Store) RenameFile(oldPath, newPath string) error {
+	basename, parent, stem := PathParts(newPath)
+	res, err := s.db.Exec(`
+		UPDATE files
+		SET path = ?, basename = ?, parent = ?, stem = ?
+		WHERE path = ?
+	`, newPath, basename, parent, stem, oldPath)
+	if err != nil {
+		return fmt.Errorf("rename file: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rename file rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("rename file: no file found with path %q", oldPath)
+	}
+	return nil
 }
 
 // AddIndexedFolder adds a folder path to the indexed folders list.
@@ -462,10 +504,11 @@ func (s *Store) GetAllChunks() ([]ChunkRecord, error) {
 func (s *Store) GetFileByID(id int64) (FileRecord, error) {
 	var f FileRecord
 	err := s.db.QueryRow(`
-		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path, basename, parent, stem
 		FROM files WHERE id = ?
 	`, id).Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
-		&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath)
+		&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath,
+		&f.Basename, &f.Parent, &f.Stem)
 	if err != nil {
 		return f, fmt.Errorf("get file by id: %w", err)
 	}
@@ -484,7 +527,7 @@ func (s *Store) GetFilesByIDs(ids []int64) ([]FileRecord, error) {
 		args[i] = id
 	}
 	rows, err := s.db.Query(
-		`SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		`SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path, basename, parent, stem
 		 FROM files WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
 		args...,
 	)
@@ -496,7 +539,8 @@ func (s *Store) GetFilesByIDs(ids []int64) ([]FileRecord, error) {
 	for rows.Next() {
 		var f FileRecord
 		if err := rows.Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
-			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath); err != nil {
+			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath,
+			&f.Basename, &f.Parent, &f.Stem); err != nil {
 			return nil, err
 		}
 		files = append(files, f)
@@ -508,7 +552,7 @@ func (s *Store) GetFilesByIDs(ids []int64) ([]FileRecord, error) {
 // It is used by the startup rescan to detect and remove files that no longer exist on disk.
 func (s *Store) GetAllFiles() ([]FileRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path, basename, parent, stem
 		FROM files
 	`)
 	if err != nil {
@@ -519,7 +563,8 @@ func (s *Store) GetAllFiles() ([]FileRecord, error) {
 	for rows.Next() {
 		var f FileRecord
 		if err := rows.Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
-			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath); err != nil {
+			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath,
+			&f.Basename, &f.Parent, &f.Stem); err != nil {
 			return nil, fmt.Errorf("scan file: %w", err)
 		}
 		files = append(files, f)
@@ -531,7 +576,7 @@ func (s *Store) GetAllFiles() ([]FileRecord, error) {
 // started indexing but never completed (e.g. interrupted mid-flight).
 func (s *Store) GetIncompleteFiles() ([]FileRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path
+		SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path, basename, parent, stem
 		FROM files WHERE content_hash = ''
 	`)
 	if err != nil {
@@ -542,7 +587,8 @@ func (s *Store) GetIncompleteFiles() ([]FileRecord, error) {
 	for rows.Next() {
 		var f FileRecord
 		if err := rows.Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
-			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath); err != nil {
+			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath,
+			&f.Basename, &f.Parent, &f.Stem); err != nil {
 			return nil, fmt.Errorf("scan file: %w", err)
 		}
 		files = append(files, f)
@@ -752,7 +798,7 @@ func (s *Store) EvictOldParsedQueryCache() error {
 func (s *Store) SearchFilenameContains(query string) ([]FileRecord, error) {
 	escaped := escapeLike(query)
 	rows, err := s.db.Query(
-		`SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path`+
+		`SELECT id, path, file_type, extension, size_bytes, modified_at, indexed_at, content_hash, thumbnail_path, basename, parent, stem`+
 			` FROM files WHERE path LIKE '%' || ? || '%' ESCAPE '\' LIMIT 50`,
 		escaped)
 	if err != nil {
@@ -764,7 +810,8 @@ func (s *Store) SearchFilenameContains(query string) ([]FileRecord, error) {
 	for rows.Next() {
 		var f FileRecord
 		if err := rows.Scan(&f.ID, &f.Path, &f.FileType, &f.Extension, &f.SizeBytes,
-			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath); err != nil {
+			&f.ModifiedAt, &f.IndexedAt, &f.ContentHash, &f.ThumbnailPath,
+			&f.Basename, &f.Parent, &f.Stem); err != nil {
 			return nil, fmt.Errorf("scan file: %w", err)
 		}
 		files = append(files, f)
@@ -855,4 +902,21 @@ func (s *Store) HasMissingVectorBlobs() (bool, error) {
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// FilenameFTSAvailable reports whether the FTS5 filename_search virtual table
+// was successfully created (migration 007 ran). When false, callers should
+// fall back to the LIKE-based SearchFilenameContains.
+func (s *Store) FilenameFTSAvailable() bool {
+	return s.filenameFTSReady
+}
+
+// hasFTSTable returns true when filename_search exists as a virtual table in
+// the database. It is called once during Store construction.
+func hasFTSTable(db *sql.DB) bool {
+	var name string
+	err := db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='filename_search'`,
+	).Scan(&name)
+	return err == nil && name == "filename_search"
 }

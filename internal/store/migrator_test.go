@@ -52,8 +52,8 @@ func TestApply_FreshDB(t *testing.T) {
 		got = append(got, r)
 	}
 
-	if len(got) != 5 {
-		t.Fatalf("expected 5 migrations applied, got %d", len(got))
+	if len(got) != 7 {
+		t.Fatalf("expected 7 migrations applied, got %d", len(got))
 	}
 	for i, r := range got {
 		if r.version != i+1 {
@@ -86,8 +86,11 @@ func TestApply_SkipsAlreadyApplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Also hand-create the tables that migration 1 would create, so migration 2 (ALTER TABLE chunks)
-	// can find the chunks table.
+	// and migration 6 (ALTER TABLE files) can find the expected tables.
 	if _, err := db.Exec(`CREATE TABLE chunks (id INTEGER PRIMARY KEY, file_id INTEGER, vector_id TEXT UNIQUE, chunk_index INTEGER, start_time REAL, end_time REAL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, file_type TEXT NOT NULL, extension TEXT NOT NULL, size_bytes INTEGER NOT NULL, modified_at DATETIME NOT NULL, indexed_at DATETIME NOT NULL, content_hash TEXT NOT NULL DEFAULT '', thumbnail_path TEXT NOT NULL DEFAULT '')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -99,8 +102,8 @@ func TestApply_SkipsAlreadyApplied(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 5 {
-		t.Fatalf("expected 5 rows, got %d", count)
+	if count != 7 {
+		t.Fatalf("expected 7 rows, got %d", count)
 	}
 
 	// Version 2's ALTER TABLE must have run: chunks.vector_blob column exists.
@@ -114,6 +117,12 @@ func TestApply_SkipsAlreadyApplied(t *testing.T) {
 	// Version 5's ALTER TABLE must have run: schema_version column exists.
 	if !columnExists(t, db, "parsed_query_cache", "schema_version") {
 		t.Error("expected schema_version column after migration 5 ran")
+	}
+	// Version 6's ALTER TABLE must have run: derived columns exist.
+	for _, col := range []string{"basename", "parent", "stem"} {
+		if !columnExists(t, db, "files", col) {
+			t.Errorf("expected files.%s column after migration 6 ran", col)
+		}
 	}
 }
 
@@ -242,9 +251,9 @@ func TestApply_LegacyAdoption(t *testing.T) {
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	// Legacy adoption stamps 1..3; migrations 004 and 005 are real new migrations that run on top.
-	if count != 5 {
-		t.Fatalf("expected 5 rows after legacy adoption + migrations 004+005, got %d", count)
+	// Legacy adoption stamps 1..3; migrations 004, 005, 006, and 007 are real new migrations that run on top.
+	if count != 7 {
+		t.Fatalf("expected 7 rows after legacy adoption + migrations 004+005+006+007, got %d", count)
 	}
 	if !columnExists(t, db, "chunks", "embedding_model") {
 		t.Error("expected embedding_model column after migration 004 ran")
@@ -293,6 +302,20 @@ func TestStore_NewStore_RunsMigrations(t *testing.T) {
 	}
 	if !columnExists(t, s.db, "chunks", "vector_blob") {
 		t.Error("expected chunks.vector_blob column to exist")
+	}
+	// Migration 006: derived path columns.
+	for _, col := range []string{"basename", "parent", "stem"} {
+		if !columnExists(t, s.db, "files", col) {
+			t.Errorf("expected files.%s column to exist after migration 006", col)
+		}
+	}
+	// Migration 007: FTS5 virtual table.
+	if !tableExists(t, s.db, "filename_search") {
+		t.Error("expected filename_search FTS5 virtual table to exist after migration 007")
+	}
+	// FilenameFTSAvailable should report true when the table exists.
+	if !s.FilenameFTSAvailable() {
+		t.Error("expected FilenameFTSAvailable() == true after successful migration 007")
 	}
 }
 
@@ -408,6 +431,264 @@ func TestApplyWithBackfill_SkipsCallbackWhen004AlreadyApplied(t *testing.T) {
 	}
 	if called {
 		t.Error("backfill should not be invoked when migration 004 was already applied")
+	}
+}
+
+// TestMigration_006_BackfillsDerivedColumns seeds a v5 DB with rows that
+// lack the derived columns, runs Apply, and asserts every row is correctly
+// backfilled with basename, parent, and stem values.
+func TestMigration_006_BackfillsDerivedColumns(t *testing.T) {
+	db := openMemDB(t)
+
+	// Build a v5-equivalent schema: same tables as migrations 1-5 but without
+	// the derived columns that migration 6 will add.
+	v5Schema := `
+		CREATE TABLE files (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			path          TEXT NOT NULL UNIQUE,
+			file_type     TEXT NOT NULL,
+			extension     TEXT NOT NULL,
+			size_bytes    INTEGER NOT NULL,
+			modified_at   DATETIME NOT NULL,
+			indexed_at    DATETIME NOT NULL,
+			content_hash  TEXT NOT NULL DEFAULT '',
+			thumbnail_path TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE chunks (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			file_id     INTEGER NOT NULL,
+			vector_id   TEXT NOT NULL UNIQUE,
+			chunk_index INTEGER NOT NULL,
+			start_time  REAL NOT NULL DEFAULT 0,
+			end_time    REAL NOT NULL DEFAULT 0,
+			vector_blob BLOB,
+			embedding_model TEXT NOT NULL DEFAULT '',
+			embedding_dims  INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE TABLE indexed_folders (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE);
+		CREATE TABLE excluded_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT NOT NULL UNIQUE);
+		CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE query_cache (query TEXT PRIMARY KEY, vector BLOB NOT NULL, created_at INTEGER NOT NULL);
+		CREATE TABLE parsed_query_cache (
+			query_text_normalized TEXT PRIMARY KEY,
+			spec_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			schema_version INTEGER NOT NULL DEFAULT 0
+		);
+	`
+	if _, err := db.Exec(v5Schema); err != nil {
+		t.Fatalf("seed v5 schema: %v", err)
+	}
+
+	// Seed fixture rows covering the path shapes we care about.
+	type fixture struct {
+		path         string
+		wantBasename string
+		wantParent   string
+		wantStem     string
+	}
+	fixtures := []fixture{
+		{"/home/user/documents/report.pdf", "report.pdf", "/home/user/documents", "report"},
+		{"/opt/backups/data.tar.gz", "data.tar.gz", "/opt/backups", "data.tar"},
+		{"/usr/bin/grep", "grep", "/usr/bin", "grep"},
+		{"/etc/ssh/sshd_config", "sshd_config", "/etc/ssh", "sshd_config"},
+		{"standalone.txt", "standalone.txt", "", "standalone"},
+		{"/file_at_root.txt", "file_at_root.txt", "/", "file_at_root"},
+	}
+	for i, f := range fixtures {
+		_, err := db.Exec(
+			`INSERT INTO files (path, file_type, extension, size_bytes, modified_at, indexed_at)
+			 VALUES (?, 'text', '.txt', 0, '2020-01-01', '2020-01-01')`,
+			f.path,
+		)
+		if err != nil {
+			t.Fatalf("insert fixture %d (%s): %v", i, f.path, err)
+		}
+	}
+
+	// Stamp versions 1–5 as already applied so Apply only runs migration 6.
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	ts := time.Now().UTC().Format(time.RFC3339)
+	for v := 1; v <= 5; v++ {
+		if _, err := db.Exec(`INSERT INTO schema_migrations VALUES (?, ?)`, v, ts); err != nil {
+			t.Fatalf("stamp version %d: %v", v, err)
+		}
+	}
+
+	if err := Apply(db, migratorTestLogger); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	// Assert derived columns are now present.
+	for _, col := range []string{"basename", "parent", "stem"} {
+		if !columnExists(t, db, "files", col) {
+			t.Errorf("expected files.%s column after migration 006", col)
+		}
+	}
+
+	// Assert each seeded row was backfilled correctly.
+	rows, err := db.Query(`SELECT path, basename, parent, stem FROM files ORDER BY path`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	got := make(map[string][3]string)
+	for rows.Next() {
+		var path, basename, parent, stem string
+		if err := rows.Scan(&path, &basename, &parent, &stem); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[path] = [3]string{basename, parent, stem}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	for _, f := range fixtures {
+		vals, ok := got[f.path]
+		if !ok {
+			t.Errorf("path %q not found in results", f.path)
+			continue
+		}
+		if vals[0] != f.wantBasename {
+			t.Errorf("path=%q: basename = %q, want %q", f.path, vals[0], f.wantBasename)
+		}
+		if vals[1] != f.wantParent {
+			t.Errorf("path=%q: parent = %q, want %q", f.path, vals[1], f.wantParent)
+		}
+		if vals[2] != f.wantStem {
+			t.Errorf("path=%q: stem = %q, want %q", f.path, vals[2], f.wantStem)
+		}
+	}
+}
+
+// TestMigration_006_BatchedBackfill_12kRows seeds 12 000 synthetic rows in a
+// v5 DB, runs Apply (which applies migration 006), and asserts that every row
+// has its derived columns populated correctly. This exercises the batched
+// Go-driven backfill path (EDGE-4): the backfill runs in 5k-row chunks to
+// avoid long-held WAL write locks on large existing databases.
+func TestMigration_006_BatchedBackfill_12kRows(t *testing.T) {
+	db := openMemDB(t)
+
+	v5Schema := `
+		CREATE TABLE files (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			path          TEXT NOT NULL UNIQUE,
+			file_type     TEXT NOT NULL,
+			extension     TEXT NOT NULL,
+			size_bytes    INTEGER NOT NULL,
+			modified_at   DATETIME NOT NULL,
+			indexed_at    DATETIME NOT NULL,
+			content_hash  TEXT NOT NULL DEFAULT '',
+			thumbnail_path TEXT NOT NULL DEFAULT ''
+		);
+		CREATE TABLE chunks (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			file_id     INTEGER NOT NULL,
+			vector_id   TEXT NOT NULL UNIQUE,
+			chunk_index INTEGER NOT NULL,
+			start_time  REAL NOT NULL DEFAULT 0,
+			end_time    REAL NOT NULL DEFAULT 0,
+			vector_blob BLOB,
+			embedding_model TEXT NOT NULL DEFAULT '',
+			embedding_dims  INTEGER NOT NULL DEFAULT 0
+		);
+		CREATE TABLE indexed_folders (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE);
+		CREATE TABLE excluded_patterns (id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT NOT NULL UNIQUE);
+		CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+		CREATE TABLE query_cache (query TEXT PRIMARY KEY, vector BLOB NOT NULL, created_at INTEGER NOT NULL);
+		CREATE TABLE parsed_query_cache (
+			query_text_normalized TEXT PRIMARY KEY,
+			spec_json TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			last_used_at INTEGER NOT NULL,
+			schema_version INTEGER NOT NULL DEFAULT 0
+		);
+	`
+	if _, err := db.Exec(v5Schema); err != nil {
+		t.Fatalf("seed v5 schema: %v", err)
+	}
+
+	// Insert 12 000 rows with deterministic paths spread across different
+	// directory depths to exercise the full path-decomposition formula.
+	const total = 12000
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin seed tx: %v", err)
+	}
+	for i := 0; i < total; i++ {
+		path := fmt.Sprintf("/home/user/dir%04d/file%05d.txt", i%100, i)
+		if _, err := tx.Exec(
+			`INSERT INTO files (path, file_type, extension, size_bytes, modified_at, indexed_at)
+			 VALUES (?, 'text', '.txt', 0, '2020-01-01', '2020-01-01')`,
+			path,
+		); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit seed tx: %v", err)
+	}
+
+	// Stamp versions 1–5 as already applied so Apply only runs migration 006.
+	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	ts := time.Now().UTC().Format(time.RFC3339)
+	for v := 1; v <= 5; v++ {
+		if _, err := db.Exec(`INSERT INTO schema_migrations VALUES (?, ?)`, v, ts); err != nil {
+			t.Fatalf("stamp version %d: %v", v, err)
+		}
+	}
+
+	if err := Apply(db, migratorTestLogger); err != nil {
+		t.Fatalf("Apply (migration 006 with 12k rows): %v", err)
+	}
+
+	// All rows must have non-empty basename and parent.
+	var emptyBasename, emptyStem int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM files WHERE basename = ''`).Scan(&emptyBasename); err != nil {
+		t.Fatalf("count empty basename: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM files WHERE stem = ''`).Scan(&emptyStem); err != nil {
+		t.Fatalf("count empty stem: %v", err)
+	}
+	if emptyBasename != 0 {
+		t.Errorf("EDGE-4: %d rows still have empty basename after batched backfill", emptyBasename)
+	}
+	if emptyStem != 0 {
+		t.Errorf("EDGE-4: %d rows still have empty stem after batched backfill", emptyStem)
+	}
+
+	// Spot-check a known row.
+	var basename, parent, stem string
+	if err := db.QueryRow(
+		`SELECT basename, parent, stem FROM files WHERE path = '/home/user/dir0000/file00000.txt'`,
+	).Scan(&basename, &parent, &stem); err != nil {
+		t.Fatalf("spot-check row: %v", err)
+	}
+	if basename != "file00000.txt" {
+		t.Errorf("spot-check: basename = %q, want %q", basename, "file00000.txt")
+	}
+	if parent != "/home/user/dir0000" {
+		t.Errorf("spot-check: parent = %q, want %q", parent, "/home/user/dir0000")
+	}
+	if stem != "file00000" {
+		t.Errorf("spot-check: stem = %q, want %q", stem, "file00000")
+	}
+
+	// Total row count must be intact.
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM files`).Scan(&count); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+	if count != total {
+		t.Errorf("expected %d rows, got %d after migration 006", total, count)
 	}
 }
 

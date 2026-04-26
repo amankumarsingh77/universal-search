@@ -13,7 +13,6 @@ import ErrorBanner from './components/ErrorBanner';
 import WarningChip from './components/WarningChip';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
 import { SettingsButton } from './components/SettingsButton';
-import { SettingsPopover } from './components/SettingsPopover';
 import { SettingsPanel } from './components/SettingsPanel';
 import type { SettingsTab } from './components/SettingsPanel';
 import { useSearch } from './hooks/useSearch';
@@ -67,7 +66,6 @@ function App() {
   // Settings panel state
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('folders');
-  const [showSettingsPopover, setShowSettingsPopover] = useState(false);
 
   useEffect(() => {
     GetFolders().then(folders => setHasFolders(folders.length > 0));
@@ -79,7 +77,6 @@ function App() {
     const _cancel = EventsOn('open-folder-manager', () => {
       setSettingsTab('folders');
       setShowSettings(true);
-      setShowSettingsPopover(false);
     });
     return () => {
       EventsOff('open-folder-manager');
@@ -90,7 +87,6 @@ function App() {
     const _cancel = EventsOn('open-api-key-dialog', () => {
       setSettingsTab('api-key');
       setShowSettings(true);
-      setShowSettingsPopover(false);
     });
     return () => {
       EventsOff('open-api-key-dialog');
@@ -99,6 +95,11 @@ function App() {
 
   useEffect(() => {
     const _cancel = EventsOn('window-shown', () => {
+      // When the global hotkey re-shows the window over an open settings
+      // panel, do not yank focus to the search input — leave whatever the
+      // user was on focused so the panel survives intact.
+      const w = window as unknown as Record<string, unknown>;
+      if (w.__settingsPanelOpen) return;
       const input = document.querySelector('input[type="text"]') as HTMLInputElement;
       if (input) input.focus();
     });
@@ -123,6 +124,13 @@ function App() {
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // While the settings panel is open, the panel owns keyboard input
+      // (Escape closes it, no Arrow/Enter shortcuts apply, and Cmd-R is
+      // not a re-index gesture from this layer). Settings has its own
+      // capture-phase Escape listener; this guard prevents stale handlers
+      // from this component firing on top of it.
+      if (showSettings) return;
+
       if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
         e.preventDefault();
         ReindexNow();
@@ -171,7 +179,7 @@ function App() {
           break;
       }
     },
-    [results, selectedIndex, selectedResult, query, setQuery, setSelectedIndex]
+    [results, selectedIndex, selectedResult, query, setQuery, setSelectedIndex, showSettings]
   );
 
   useEffect(() => {
@@ -189,18 +197,12 @@ function App() {
     const handleBlur = () => {
       if (isSuppressed()) return;
       const w = window as unknown as Record<string, unknown>;
-      if (w.__settingsPopoverOpen || w.__settingsPanelOpen) return;
+      if (w.__settingsPanelOpen) return;
       HideWindow();
     };
     window.addEventListener('blur', handleBlur);
     return () => window.removeEventListener('blur', handleBlur);
   }, [isSuppressed]);
-
-  const openSettingsTab = (tab: SettingsTab) => {
-    setSettingsTab(tab);
-    setShowSettings(true);
-    setShowSettingsPopover(false);
-  };
 
   return (
     <div style={styles.root}>
@@ -219,13 +221,8 @@ function App() {
             : undefined
         }
         rightSlot={
-          <SettingsButton onClick={() => setShowSettingsPopover((v) => !v)} />
+          <SettingsButton onClick={() => { setSettingsTab('folders'); setShowSettings(true); }} />
         }
-      />
-      <SettingsPopover
-        open={showSettingsPopover}
-        onClose={() => setShowSettingsPopover(false)}
-        onOpenSettings={openSettingsTab}
       />
       {errorCode === 'ERR_MODEL_MISMATCH' ? (
         <ReindexBanner errorCode={errorCode} />

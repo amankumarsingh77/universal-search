@@ -80,6 +80,9 @@ var assets embed.FS
 //go:embed assets/tray-icon.png
 var trayIcon []byte
 
+//go:embed assets/tray-icon-template.png
+var trayIconTemplate []byte
+
 func init() {
 	// Load .env file if present (errors are ignored — file is optional).
 	godotenv.Overload()
@@ -109,7 +112,7 @@ func main() {
 
 	a := app.NewApp(cfg)
 	a.SetBaseContext(baseCtx)
-	app.SetTrayIcon(a, trayIcon)
+	app.SetTrayIcon(a, trayIcon, trayIconTemplate)
 
 	// Build application menu.
 	appMenu := menu.NewMenu()

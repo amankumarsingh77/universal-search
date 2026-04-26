@@ -8,19 +8,24 @@ import (
 
 // TrayManager owns the system tray icon and its menu lifecycle.
 type TrayManager struct {
-	app    AppController
-	icon   []byte
-	logger *slog.Logger
-	done   chan struct{}
+	app      AppController
+	icon     []byte
+	iconTmpl []byte
+	logger   *slog.Logger
+	done     chan struct{}
 }
 
-// NewTrayManager constructs a TrayManager with the given app controller and icon bytes.
-func NewTrayManager(app AppController, icon []byte, logger *slog.Logger) *TrayManager {
+// NewTrayManager constructs a TrayManager. icon is the colored fallback used
+// on Windows and Linux. iconTmpl is the black + alpha template image used on
+// macOS so the OS can tint it for light/dark menu bars; pass nil to fall back
+// to the regular icon on all platforms.
+func NewTrayManager(app AppController, icon, iconTmpl []byte, logger *slog.Logger) *TrayManager {
 	return &TrayManager{
-		app:    app,
-		icon:   icon,
-		logger: logger,
-		done:   make(chan struct{}),
+		app:      app,
+		icon:     icon,
+		iconTmpl: iconTmpl,
+		logger:   logger,
+		done:     make(chan struct{}),
 	}
 }
 
@@ -36,10 +41,19 @@ func (t *TrayManager) Stop() {
 }
 
 func (t *TrayManager) onReady() {
-	systray.SetIcon(t.icon)
-	systray.SetTitle("Findo")
+	if len(t.iconTmpl) > 0 {
+		// On macOS, marks the image as a template so the OS tints it dark in
+		// light mode and white in dark mode. On Windows/Linux, falls back to
+		// the regular colored icon.
+		systray.SetTemplateIcon(t.iconTmpl, t.icon)
+	} else {
+		systray.SetIcon(t.icon)
+	}
+	systray.SetTitle("")
 	hotkeyStr := t.app.GetHotkeyString()
 	systray.SetTooltip("Findo — " + hotkeyStr)
+
+	systray.SetOnClick(func(systray.IMenu) { t.app.ToggleWindow() })
 
 	showHide := systray.AddMenuItem("Show/Hide", "Toggle search window")
 	systray.AddSeparator()

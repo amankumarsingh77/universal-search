@@ -59,6 +59,7 @@ type App struct {
 	tray          *desktop.TrayManager
 	hotkeyMgr     *desktop.HotkeyManager
 	trayIcon      []byte
+	trayIconTpl   []byte
 	windowMu      sync.Mutex
 	apiKeyMu      sync.RWMutex // guards a.embedder and a.llmParser: write on SetGeminiAPIKey, read on ParseQuery/SearchWithFilters
 	windowVisible bool
@@ -108,8 +109,13 @@ func NewApp(cfg *config.Config) *App {
 }
 
 // SetTrayIcon sets the raw bytes of the tray icon before startup. Package-level
-// to avoid adding a Wails binding.
-func SetTrayIcon(a *App, icon []byte) { a.trayIcon = icon }
+// to avoid adding a Wails binding. The template icon is used on macOS (black +
+// alpha, auto-tinted by the OS); the regular icon is the colored fallback for
+// Windows and Linux.
+func SetTrayIcon(a *App, regular, template []byte) {
+	a.trayIcon = regular
+	a.trayIconTpl = template
+}
 
 // FolderAllowed reports whether the given absolute path falls under one of the
 // app's indexed folders. Used by the local-file asset handler. Package-level
@@ -154,6 +160,10 @@ func OnShutdown(a *App) func(context.Context) { return a.shutdown }
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.startErrgroup()
+
+	// Hide from Dock / Cmd-Tab on macOS. Wails hardcodes Regular activation
+	// policy in its AppDelegate, so this must be set after startup.
+	desktop.SetAccessoryActivationPolicy()
 
 	// Initialize logger.
 	dataDir, err := platform.DataDir()
@@ -291,7 +301,7 @@ func (a *App) startup(ctx context.Context) {
 		log.Error("failed to start file watcher", "error", err)
 	}
 
-	a.tray = desktop.NewTrayManager(a, a.trayIcon, log)
+	a.tray = desktop.NewTrayManager(a, a.trayIcon, a.trayIconTpl, log)
 	a.tray.Start()
 
 	a.hotkeyMgr = desktop.NewHotkeyManager(a, a.store, log)

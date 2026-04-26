@@ -2,6 +2,7 @@ build/bin
 node_modules
 frontend/dist
 design/
+graphify-out/
 docs/
 data/
 .env

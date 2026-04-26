@@ -266,3 +266,55 @@ func TestCorruptConfigFailsLoud(t *testing.T) { TestLoad_MalformedTOML(t) }
 // behavior is fail-loud (per REF-005), so this asserts the same contract as
 // TestCorruptConfigFailsLoud.
 func TestCorruptConfigFallback(t *testing.T) { TestLoad_MalformedTOML(t) }
+
+// REQ-11: FilenameSearch defaults resolve from TOML to expected values.
+func TestFilenameSearchDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	fs := cfg.FilenameSearch
+	if !fs.Enabled {
+		t.Error("FilenameSearch.Enabled: want true, got false")
+	}
+	if fs.FuzzyTopN != 50 {
+		t.Errorf("FilenameSearch.FuzzyTopN: want 50, got %d", fs.FuzzyTopN)
+	}
+	if fs.RrfK != 60 {
+		t.Errorf("FilenameSearch.RrfK: want 60, got %d", fs.RrfK)
+	}
+	if fs.ExactBonus != 0.05 {
+		t.Errorf("FilenameSearch.ExactBonus: want 0.05, got %v", fs.ExactBonus)
+	}
+}
+
+// REQ-11: Missing [filename_search] section in user config falls back to defaults.
+func TestFilenameSearchMissingSection_FallsBackToDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	// Write a config with no [filename_search] section.
+	body := "[indexing]\nworkers = 2\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, warnings, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %+v", warnings)
+	}
+
+	def := DefaultConfig()
+	fs := cfg.FilenameSearch
+	if fs.Enabled != def.FilenameSearch.Enabled {
+		t.Errorf("FilenameSearch.Enabled: got %v, want %v", fs.Enabled, def.FilenameSearch.Enabled)
+	}
+	if fs.FuzzyTopN != def.FilenameSearch.FuzzyTopN {
+		t.Errorf("FilenameSearch.FuzzyTopN: got %d, want %d", fs.FuzzyTopN, def.FilenameSearch.FuzzyTopN)
+	}
+	if fs.RrfK != def.FilenameSearch.RrfK {
+		t.Errorf("FilenameSearch.RrfK: got %d, want %d", fs.RrfK, def.FilenameSearch.RrfK)
+	}
+	if fs.ExactBonus != def.FilenameSearch.ExactBonus {
+		t.Errorf("FilenameSearch.ExactBonus: got %v, want %v", fs.ExactBonus, def.FilenameSearch.ExactBonus)
+	}
+}

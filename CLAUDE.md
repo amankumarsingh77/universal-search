@@ -25,7 +25,7 @@ Design spec: `docs/superpowers/specs/2026-03-27-universal-search-design.md` (loc
 Three layers:
 
 1. **React frontend** (`frontend/`) — Raycast-style floating window: results list + preview panel, collapsible indexing progress bar, filter chips for structured query constraints, failure drill-down modal, error banner / warning chip for query-pipeline outcomes.
-2. **Go backend** (`internal/`) — File watcher, indexing pipeline (classify → extract/chunk → embed → store) with concurrent workers and a shared rate limiter, NL query pipeline (grammar + optional LLM parse + cache), search engine (planner → rerank → relaxation → filename fallback), system tray.
+2. **Go backend** (`internal/`) — File watcher, indexing pipeline (classify → extract/chunk → embed → store) with concurrent workers and a shared rate limiter, NL query pipeline (grammar + optional LLM parse + cache), search engine (query classifier → semantic [planner → rerank → relaxation] and/or filename [FTS5 trigram + fuzzy + glob] → RRF blender), system tray.
 3. **Storage** — SQLite is the source of truth for file metadata, indexed folders, excluded patterns, settings, and the parsed-query cache. HNSW holds 768-dim vectors; each chunk's vector is also mirrored inline in SQLite for brute-force fallback on small corpora.
 
 Video pipeline follows sentrysearch patterns: 30s chunks with 5s overlap, 480p/5fps preprocessing, still-frame detection, direct video-to-embedding (no captioning).
@@ -36,8 +36,8 @@ Wails-bound `App` lives in `internal/app/`, split by concern across files kept u
 
 - `indexer/` — pipeline, reconcile, startup rescan, retry coordinator, failure registry
 - `embedder/` — Gemini + Fake + RateLimiter (the only implementations shipped)
-- `search/` — planner, rerank, relaxation, filename fallback
-- `query/` — grammar, LLM parse, date normalization, typo correction, merge, cache
+- `search/` — planner, rerank, relaxation, filename index (FTS5 trigram + fuzzy rescorer in `search/fuzzy/`), glob, RRF blender, unified entry point
+- `query/` — grammar, LLM parse, date normalization, typo correction, merge, cache, classifier (filename vs content vs hybrid routing)
 - `store/` — SQLite + schema migrator (`store/migrations/`)
 - `vectorstore/` — HNSW wrapper
 - `chunker/`, `watcher/`, `desktop/` (hotkey + tray), `platform/`, `logger/`

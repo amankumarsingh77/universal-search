@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { FilterChip } from './FilterChip';
+import { FileSearch } from 'lucide-react';
 import type { ChipDTO } from '../state/searchReducer';
 
 interface SearchBarProps {
@@ -26,6 +27,7 @@ export function SearchBar({
   warningChip,
 }: SearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const hasFilenamePrefix = query.toLowerCase().startsWith('f:');
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -81,8 +83,14 @@ export function SearchBar({
           </button>
         )}
       </div>
-      {(chips.length > 0 || warningChip) && (
+      {(chips.length > 0 || warningChip || hasFilenamePrefix) && (
         <div style={styles.chipRow}>
+          {hasFilenamePrefix && (
+            <span style={styles.filenameChip} aria-label="Filenames only mode">
+              <FileSearch size={11} strokeWidth={2} aria-hidden="true" style={{ flexShrink: 0 }} />
+              Filenames only
+            </span>
+          )}
           {chips.map(chip => (
             <FilterChip
               key={chip.clauseKey}
@@ -162,6 +170,20 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap',
     padding: '0 12px 6px',
     overflow: 'hidden',
+  },
+  filenameChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '3px 10px',
+    borderRadius: '100px',
+    background: 'rgba(255,255,255,0.10)',
+    backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
+    border: '1px solid rgba(255,255,255,0.15)',
+    fontSize: '12px',
+    color: 'rgba(255,255,255,0.85)',
+    margin: '2px',
   },
   banner: {
     padding: '4px 16px 6px',

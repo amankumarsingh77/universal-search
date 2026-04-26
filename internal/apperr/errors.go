@@ -59,6 +59,12 @@ var (
 	ErrQueryRateLimited = &Error{Code: "ERR_QUERY_RATE_LIMITED", Message: "rate limited while parsing query"}
 )
 
+// Filename-search error codes (REQ-11, REQ-12).
+var (
+	ErrFilenameSearchFailed = &Error{Code: "ERR_FILENAME_SEARCH_FAILED", Message: "filename search failed"}
+	ErrClassifierFailed     = &Error{Code: "ERR_CLASSIFIER_FAILED", Message: "query classification failed"}
+)
+
 // Indexing-failure error codes (REQ-001).
 var (
 	ErrUnsupportedFormat  = &Error{Code: "ERR_UNSUPPORTED_FORMAT", Message: "file format is not supported for indexing"}

@@ -204,6 +204,45 @@ func TestClassify_UnknownCodeIsPermanent(t *testing.T) {
 	}
 }
 
+// REQ-11 / REQ-12: filename-search error codes are registered with expected fields.
+func TestFilenameSearchErrorCodes_AllDefined(t *testing.T) {
+	cases := []struct {
+		err  *Error
+		code string
+		msg  string
+	}{
+		{ErrFilenameSearchFailed, "ERR_FILENAME_SEARCH_FAILED", "filename search failed"},
+		{ErrClassifierFailed, "ERR_CLASSIFIER_FAILED", "query classification failed"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.code, func(t *testing.T) {
+			if tc.err == nil {
+				t.Fatalf("%s is nil", tc.code)
+			}
+			if tc.err.Code != tc.code {
+				t.Errorf("Code = %q, want %q", tc.err.Code, tc.code)
+			}
+			if tc.err.Message != tc.msg {
+				t.Errorf("Message = %q, want %q", tc.err.Message, tc.msg)
+			}
+		})
+	}
+}
+
+// REQ-11 / REQ-12: errors.Is works for filename-search codes when wrapped via Wrap.
+func TestFilenameSearchErrorCodes_ErrorsIsWithWrap(t *testing.T) {
+	wrappedFilename := Wrap(ErrFilenameSearchFailed.Code, "fuzzy search error", nil)
+	if !errors.Is(wrappedFilename, ErrFilenameSearchFailed) {
+		t.Error("errors.Is(Wrap(ErrFilenameSearchFailed.Code,...), ErrFilenameSearchFailed) returned false")
+	}
+
+	wrappedClassifier := Wrap(ErrClassifierFailed.Code, "llm classifier error", nil)
+	if !errors.Is(wrappedClassifier, ErrClassifierFailed) {
+		t.Error("errors.Is(Wrap(ErrClassifierFailed.Code,...), ErrClassifierFailed) returned false")
+	}
+}
+
 // Regression: errors.Is / errors.As still work for new error vars.
 func TestErrorsIs_As_Preserved(t *testing.T) {
 	cause := errors.New("root cause")

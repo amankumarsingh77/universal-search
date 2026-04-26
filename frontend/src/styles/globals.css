@@ -114,3 +114,10 @@ html, body {
 .result-item:hover .score-badge {
   opacity: 0.5 !important;
 }
+
+/* Filename highlight for matched ranges */
+.filename-highlight {
+  background: rgba(253, 224, 71, 0.25);
+  border-radius: 2px;
+  padding: 0 1px;
+}

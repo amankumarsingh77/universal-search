@@ -11,6 +11,8 @@ export const CODE_LABELS: Record<string, string> = {
   ERR_INTERNAL: "Internal error",
   ERR_QUERY_PARSE_FAILED: "Query understanding failed",
   ERR_QUERY_RATE_LIMITED: "Rate limited",
+  ERR_FILENAME_SEARCH_FAILED: "Filename search failed",
+  ERR_CLASSIFIER_FAILED: "Query classification failed",
 };
 
 export const CODE_DESCRIPTIONS: Record<string, string> = {
@@ -26,6 +28,8 @@ export const CODE_DESCRIPTIONS: Record<string, string> = {
   ERR_INTERNAL: "An unexpected error occurred.",
   ERR_QUERY_PARSE_FAILED: "Gemini could not parse your query. Check your connection and try again.",
   ERR_QUERY_RATE_LIMITED: "Too many requests to Gemini. Retrying is throttled.",
+  ERR_FILENAME_SEARCH_FAILED: "Filename search failed. Try again.",
+  ERR_CLASSIFIER_FAILED: "Could not understand the query. Try simpler terms.",
 };
 
 export function labelForCode(code: string, fallback: string): string {

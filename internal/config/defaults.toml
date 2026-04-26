@@ -58,3 +58,9 @@ video_overlap_seconds = 5
 [logging]
 level = "info"
 format = "text"
+
+[filename_search]
+enabled = true
+fuzzy_top_n = 50
+rrf_k = 60
+exact_bonus = 0.05

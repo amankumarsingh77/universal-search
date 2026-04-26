@@ -16,15 +16,16 @@ import (
 
 // Config is the root application configuration.
 type Config struct {
-	SchemaVersion int            `toml:"schema_version"`
-	App           AppConfig      `toml:"app"`
-	Indexing      IndexingConfig `toml:"indexing"`
-	Embedder      EmbedderConfig `toml:"embedder"`
-	HNSW          HNSWConfig     `toml:"hnsw"`
-	Search        SearchConfig   `toml:"search"`
-	Query         QueryConfig    `toml:"query"`
-	Chunking      ChunkingConfig `toml:"chunking"`
-	Logging       LoggingConfig  `toml:"logging"`
+	SchemaVersion  int                  `toml:"schema_version"`
+	App            AppConfig            `toml:"app"`
+	Indexing       IndexingConfig       `toml:"indexing"`
+	Embedder       EmbedderConfig       `toml:"embedder"`
+	HNSW           HNSWConfig           `toml:"hnsw"`
+	Search         SearchConfig         `toml:"search"`
+	Query          QueryConfig          `toml:"query"`
+	Chunking       ChunkingConfig       `toml:"chunking"`
+	Logging        LoggingConfig        `toml:"logging"`
+	FilenameSearch FilenameSearchConfig `toml:"filename_search"`
 }
 
 // AppConfig holds window and lifecycle settings.
@@ -103,6 +104,14 @@ type ChunkingConfig struct {
 type LoggingConfig struct {
 	Level  string `toml:"level"`
 	Format string `toml:"format"`
+}
+
+// FilenameSearchConfig holds tuning knobs for the filename-search pipeline.
+type FilenameSearchConfig struct {
+	Enabled    bool    `toml:"enabled"`
+	FuzzyTopN  int     `toml:"fuzzy_top_n"`
+	RrfK       int     `toml:"rrf_k"`
+	ExactBonus float64 `toml:"exact_bonus"`
 }
 
 // Warning describes a non-fatal config issue surfaced during loading.

@@ -1,6 +1,8 @@
 import type { SearchResultDTO } from '../hooks/useSearch';
 import { formatSize } from '../utils/format';
 import { Thumbnail } from './Thumbnail';
+import { MatchKindIcon } from './MatchKindIcon';
+import { splitHighlights } from '../lib/highlight';
 
 interface ResultItemProps {
   result: SearchResultDTO;
@@ -74,7 +76,19 @@ export function ResultItem({ result, isSelected, onClick, onDoubleClick }: Resul
     >
       <Thumbnail fileType={result.fileType} thumbnailPath={result.thumbnailPath} />
       <div style={styles.info}>
-        <div style={styles.fileName}>{midTruncate(result.fileName)}</div>
+        <div style={styles.fileNameRow}>
+          <MatchKindIcon kind={result.matchKind ?? 'content'} size={13} />
+          <div style={styles.fileName}>
+            {splitHighlights(midTruncate(result.fileName), result.highlights ?? []).map(
+              (seg, i) =>
+                seg.matched ? (
+                  <span key={i} className="filename-highlight">{seg.text}</span>
+                ) : (
+                  <span key={i}>{seg.text}</span>
+                ),
+            )}
+          </div>
+        </div>
         {shortDir ? (
           <div style={styles.breadcrumb}>{shortDir}</div>
         ) : null}
@@ -99,6 +113,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   info: {
     flex: 1,
+    overflow: 'hidden',
+  },
+  fileNameRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
     overflow: 'hidden',
   },
   fileName: {

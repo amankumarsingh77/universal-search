@@ -66,7 +66,7 @@ type FilterSpec struct {
 // CacheSchemaVersion is the version written to parsed_query_cache.schema_version.
 // Bump this when the FilterSpec serialization or parser semantics change in a way
 // that makes cached entries unsafe to reuse.
-const CacheSchemaVersion = 2
+const CacheSchemaVersion = 3
 
 // KnownKindValues maps user-facing kind names to file_type values.
 var KnownKindValues = map[string]string{

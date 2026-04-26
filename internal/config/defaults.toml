@@ -42,7 +42,7 @@ filename_merge_enabled = true
 
 [query]
 llm_model = "gemini-2.5-flash-lite"
-llm_timeout_ms = 500
+llm_timeout_ms = 1500
 llm_max_retries = 2
 trigger_min_tokens = 6
 trigger_max_chars = 500

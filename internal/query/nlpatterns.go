@@ -37,195 +37,261 @@ var nlKindPatterns = map[string]string{
 	"script":      "text",
 }
 
-// temporalPatterns are temporal keywords that indicate date constraints.
-var temporalPatterns = map[string]bool{
-	"today":      true,
-	"yesterday":  true,
-	"last week":  true,
-	"last month": true,
-	"last year":  true,
-	"this week":  true,
-	"this month": true,
-	"this year":  true,
-	"next week":  true,
-	"next month": true,
-	"next year":  true,
-	"past":       true,
-	"recent":     true,
-	"older":      true,
-	"newer":      true,
-	"since":      true,
-	"before":     true,
-	"after":      true,
+// temporalPatternsSorted lists temporal patterns in descending length order
+// for longest-match-first scanning. "before", "after", and "since" are
+// intentionally absent — they only make sense paired with a following date,
+// which is handled by tryDirectionalDateAfterKind, not as standalone phrases.
+var temporalPatternsSorted = []string{
+	"last month", "this month", "next month",
+	"last week", "this week", "next week",
+	"last year", "this year", "next year",
+	"today", "yesterday",
+	"past", "recent", "older", "newer",
+}
+
+// nlFillerWords are common determiners/articles that can precede a kind word
+// in a simple kind-only pattern (e.g., "my photos", "the documents").
+var nlFillerWords = map[string]bool{
+	"my": true, "the": true, "all": true, "a": true, "an": true,
+	"some": true, "any": true, "our": true, "these": true, "those": true,
 }
 
 // parseNaturalLanguage attempts to parse common natural language patterns.
-// Returns (spec, remainingSemanticText, ok) where ok=true if patterns were found.
+// It finds a kind word and optionally a temporal clue, but only when the
+// pattern is unambiguous — kind words followed by temporal connectors, or
+// standalone kind words with only filler words around them.
+//
+// If the input contains structured operator syntax (kind:, ext:, etc.),
+// quoted phrases, or negation, this function returns false so the grammar
+// parser can handle it.
 func parseNaturalLanguage(input string, now time.Time) (FilterSpec, string, bool) {
+	if hasStructuredSyntax(input) {
+		return FilterSpec{}, "", false
+	}
+
 	lower := strings.ToLower(input)
+	words := strings.Fields(lower)
 
-	// Pattern: "<file type> from <time period>" (e.g., "photos from last week")
-	if kind, timePeriod, ok := extractKindAndTime(lower); ok {
-		spec := FilterSpec{Source: SourceGrammar}
-
-		// Add file type clause
-		spec.Must = append(spec.Must, Clause{
-			Field: FieldFileType,
-			Op:    OpEq,
-			Value: kind,
-		})
-
-		// Add time constraint if found
-		if timePeriod != "" {
-			if afterT, beforeT, ok := NormalizeDate(timePeriod, now); ok {
-				spec.Must = append(spec.Must, Clause{
-					Field: FieldModifiedAt,
-					Op:    OpGte,
-					Value: afterT.Unix(),
-				})
-				if !beforeT.Equal(now) {
-					spec.Must = append(spec.Must, Clause{
-						Field: FieldModifiedAt,
-						Op:    OpLte,
-						Value: beforeT.Unix(),
-					})
-				}
-			}
-		}
-
-		// Extract remaining semantic text
-		semantic := extractSemanticText(input, lower, kind, timePeriod)
-		return spec, semantic, true
+	kindIdx, kindMapped := findKindWord(words)
+	if kindIdx == -1 {
+		return FilterSpec{}, "", false
 	}
 
-	// Pattern: "<file type> that I took/on <date>" (e.g., "videos that I took on 12th march")
-	if kind, specificDate, ok := extractKindAndDate(lower); ok {
-		spec := FilterSpec{Source: SourceGrammar}
+	remaining := words[kindIdx+1:]
 
-		// Add file type clause
-		spec.Must = append(spec.Must, Clause{
-			Field: FieldFileType,
-			Op:    OpEq,
-			Value: kind,
-		})
+	// Pattern 1: Kind + temporal context (e.g., "photos from last week",
+	// "my videos yesterday", "documents on march 12th", "videos before 26th april").
+	if len(remaining) > 0 {
+		clauses, consumed, ok := tryTemporalAfterKind(remaining, now)
+		if ok {
+			excludeWords := []string{words[kindIdx]}
+			excludeWords = append(excludeWords, consumed...)
 
-		// Add specific date constraint
-		if afterT, beforeT, ok := NormalizeDate(specificDate, now); ok {
+			spec := FilterSpec{Source: SourceGrammar}
 			spec.Must = append(spec.Must, Clause{
-				Field: FieldModifiedAt,
-				Op:    OpGte,
-				Value: afterT.Unix(),
+				Field: FieldFileType,
+				Op:    OpEq,
+				Value: kindMapped,
 			})
-			spec.Must = append(spec.Must, Clause{
-				Field: FieldModifiedAt,
-				Op:    OpLte,
-				Value: beforeT.Unix(),
-			})
+			spec.Must = append(spec.Must, clauses...)
+
+			semantic := extractSemanticText(input, excludeWords)
+			return spec, semantic, true
 		}
-
-		// Extract remaining semantic text
-		semantic := extractSemanticText(input, lower, kind, specificDate)
-		return spec, semantic, true
 	}
 
-	// Pattern: "<file type>" (simple file type filtering)
-	if kind, ok := extractSimpleKind(lower); ok {
-		spec := FilterSpec{Source: SourceGrammar}
-		spec.Must = append(spec.Must, Clause{
-			Field: FieldFileType,
-			Op:    OpEq,
-			Value: kind,
-		})
-
-		// Extract remaining semantic text
-		semantic := extractSemanticText(input, lower, kind, "")
-		return spec, semantic, true
+	// Pattern 2: Standalone kind with only filler words (e.g., "photos",
+	// "my photos", "all documents"). Do not match if there are content
+	// words before or after the kind word.
+	for i := 0; i < kindIdx; i++ {
+		if !nlFillerWords[words[i]] {
+			return FilterSpec{}, "", false
+		}
+	}
+	for _, w := range remaining {
+		if !nlFillerWords[w] {
+			return FilterSpec{}, "", false
+		}
 	}
 
-	return FilterSpec{}, "", false
+	excludeWords := []string{words[kindIdx]}
+	for i := 0; i < kindIdx; i++ {
+		excludeWords = append(excludeWords, words[i])
+	}
+	excludeWords = append(excludeWords, remaining...)
+
+	spec := FilterSpec{Source: SourceGrammar}
+	spec.Must = append(spec.Must, Clause{
+		Field: FieldFileType,
+		Op:    OpEq,
+		Value: kindMapped,
+	})
+
+	semantic := extractSemanticText(input, excludeWords)
+	return spec, semantic, true
 }
 
-// extractKindAndTime looks for patterns like "photos from last week"
-func extractKindAndTime(lower string) (string, string, bool) {
-	// Split into words and look for "from" as a separator
-	words := strings.Fields(lower)
-	for i := 0; i < len(words)-2; i++ {
-		if words[i+1] == "from" {
-			// Check if first word is a file type
-			if kind, ok := nlKindPatterns[words[i]]; ok {
-				// Check if the remaining part is a time period
-				timePeriod := strings.Join(words[i+2:], " ")
-				if temporalPatterns[timePeriod] {
-					return kind, timePeriod, true
-				}
+// hasStructuredSyntax returns true if the input contains structured query syntax
+// that should be handled by the grammar parser instead of NL pattern matching.
+func hasStructuredSyntax(input string) bool {
+	if strings.Contains(input, `"`) {
+		return true
+	}
+	words := strings.Fields(input)
+	for _, w := range words {
+		lower := strings.ToLower(w)
+		colonIdx := strings.IndexByte(lower, ':')
+		if colonIdx > 0 {
+			prefix := lower[:colonIdx]
+			if recognizedOps[prefix] {
+				return true
 			}
 		}
+		if len(w) > 1 && w[0] == '-' {
+			return true
+		}
 	}
-	return "", "", false
+	return false
 }
 
-// extractKindAndDate looks for patterns like "videos that I took on 12th march"
-func extractKindAndDate(lower string) (string, string, bool) {
-	// Split into words and look for "on" as a separator
-	words := strings.Fields(lower)
-	for i := 0; i < len(words)-2; i++ {
-		if words[i+1] == "on" {
-			// Check if word before "on" could be a file type
-			if kind, ok := nlKindPatterns[words[i]]; ok {
-				// The rest after "on" should be the date
-				datePart := strings.Join(words[i+2:], " ")
-				return kind, datePart, true
+// findKindWord returns the index and mapped value of the first NL kind word
+// in the input. Returns (-1, "") if no kind word is found.
+func findKindWord(words []string) (int, string) {
+	for i, w := range words {
+		if kind, ok := nlKindPatterns[w]; ok {
+			return i, kind
+		}
+	}
+	return -1, ""
+}
+
+// tryTemporalAfterKind looks for temporal/date patterns in the words following
+// a kind word. It tries in order:
+//  1. "from" + temporal keyword (e.g., "from last week")
+//  2. "on" + date that NormalizeDate can parse (e.g., "on march 12th")
+//  3. directional keyword + date (e.g., "before 26th april", "after march 1",
+//     "since last month") emitting a one-sided modified_at clause
+//  4. bare temporal keyword (e.g., "today", "last week")
+//
+// Returns (clauses, consumedWords, ok). Clauses are ready to be appended to
+// the spec's Must slice.
+func tryTemporalAfterKind(words []string, now time.Time) (clauses []Clause, consumed []string, ok bool) {
+	if len(words) == 0 {
+		return nil, nil, false
+	}
+
+	// Pattern 1: "from" + temporal keyword.
+	if words[0] == "from" && len(words) >= 2 {
+		rest := strings.Join(words[1:], " ")
+		if tp := matchTemporalPattern(rest); tp != "" {
+			tpWords := strings.Fields(tp)
+			cw := make([]string, 0, 1+len(tpWords))
+			cw = append(cw, "from")
+			cw = append(cw, tpWords...)
+			return rangeClauses(tp, now), cw, true
+		}
+	}
+
+	// Pattern 2: "on" + date (only if NormalizeDate succeeds).
+	if words[0] == "on" && len(words) >= 2 {
+		datePart := strings.Join(words[1:], " ")
+		if afterT, beforeT, dateOk := NormalizeDate(datePart, now); dateOk {
+			cw := make([]string, len(words))
+			copy(cw, words)
+			cs := []Clause{
+				{Field: FieldModifiedAt, Op: OpGte, Value: afterT.Unix()},
+				{Field: FieldModifiedAt, Op: OpLte, Value: beforeT.Unix()},
 			}
+			return cs, cw, true
 		}
 	}
-	return "", "", false
+
+	// Pattern 3: directional keyword ("before"/"after"/"since") + date.
+	// Greedy descending-length scan over words[1:] so trailing tokens like
+	// "by aman" stay in the semantic text.
+	if isDirectionalKeyword(words[0]) && len(words) >= 2 {
+		for length := len(words) - 1; length >= 1; length-- {
+			datePart := strings.Join(words[1:1+length], " ")
+			afterT, _, dateOk := NormalizeDate(datePart, now)
+			if !dateOk {
+				continue
+			}
+			cw := make([]string, 0, 1+length)
+			cw = append(cw, words[0])
+			cw = append(cw, words[1:1+length]...)
+			var op Op
+			if words[0] == "before" {
+				op = OpLt
+			} else {
+				op = OpGte
+			}
+			return []Clause{{Field: FieldModifiedAt, Op: op, Value: afterT.Unix()}}, cw, true
+		}
+		// No date matched after the keyword — decline so callers can fall through.
+		return nil, nil, false
+	}
+
+	// Pattern 4: bare temporal keyword.
+	rest := strings.Join(words, " ")
+	if tp := matchTemporalPattern(rest); tp != "" {
+		return rangeClauses(tp, now), strings.Fields(tp), true
+	}
+
+	return nil, nil, false
 }
 
-// extractSimpleKind looks for simple patterns like "photos" or "videos"
-func extractSimpleKind(lower string) (string, bool) {
-	words := strings.Fields(lower)
-	if len(words) == 1 {
-		if kind, ok := nlKindPatterns[words[0]]; ok {
-			return kind, true
-		}
-	}
-	return "", false
+// isDirectionalKeyword reports whether w opens a one-sided date phrase.
+func isDirectionalKeyword(w string) bool {
+	return w == "before" || w == "after" || w == "since"
 }
 
-// extractSemanticText removes the parsed parts from the original input
-func extractSemanticText(original, lower, kind, timePart string) string {
-	// Remove the kind and time part from the original input
-	// This is a simple implementation - could be improved for more complex patterns
-	words := strings.Fields(lower)
-	var remainingWords []string
+// rangeClauses normalizes a temporal phrase into modified_at range clauses,
+// matching the bounds rule from addTemporalClauses (open upper bound when
+// NormalizeDate returns now as the "before" boundary).
+func rangeClauses(timePeriod string, now time.Time) []Clause {
+	afterT, beforeT, ok := NormalizeDate(timePeriod, now)
+	if !ok {
+		return nil
+	}
+	out := []Clause{{Field: FieldModifiedAt, Op: OpGte, Value: afterT.Unix()}}
+	if !beforeT.Equal(now) {
+		out = append(out, Clause{Field: FieldModifiedAt, Op: OpLte, Value: beforeT.Unix()})
+	}
+	return out
+}
 
-	for _, word := range words {
-		if word != kind && word != timePart {
-			remainingWords = append(remainingWords, word)
+// matchTemporalPattern finds the longest temporal pattern at the start of s.
+// Returns the matched pattern or "" if no match.
+func matchTemporalPattern(s string) string {
+	for _, tp := range temporalPatternsSorted {
+		if s == tp {
+			return tp
+		}
+		if strings.HasPrefix(s, tp+" ") {
+			return tp
+		}
+	}
+	return ""
+}
+
+// extractSemanticText removes the given exclude words (compared case-insensitively)
+// from the original input, preserving the case of remaining words.
+// Returns the semantic query with matched words removed, or "" if nothing remains.
+func extractSemanticText(original string, excludeWords []string) string {
+	lowerExclude := make(map[string]bool, len(excludeWords))
+	for _, w := range excludeWords {
+		lowerExclude[w] = true
+	}
+
+	var result []string
+	for _, word := range strings.Fields(original) {
+		if !lowerExclude[strings.ToLower(word)] {
+			result = append(result, word)
 		}
 	}
 
-	if len(remainingWords) == 0 {
+	if len(result) == 0 {
 		return ""
 	}
-
-	// Reconstruct from original to preserve case
-	originalWords := strings.Fields(original)
-	var result []string
-
-	for _, origWord := range originalWords {
-		keep := true
-		lowerOrig := strings.ToLower(origWord)
-		for _, remWord := range remainingWords {
-			if lowerOrig == remWord {
-				keep = true
-				break
-			}
-		}
-		if keep {
-			result = append(result, origWord)
-		}
-	}
-
 	return strings.Join(result, " ")
 }

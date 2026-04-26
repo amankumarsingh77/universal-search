@@ -20,10 +20,10 @@ func newTestStore(t *testing.T) *store.Store {
 	return s
 }
 
-// TestCacheSchemaVersionConstant verifies the constant is set to 2 (REQ-013).
+// TestCacheSchemaVersionConstant verifies the constant is set to 3 (REQ-013).
 func TestCacheSchemaVersionConstant(t *testing.T) {
-	if CacheSchemaVersion != 2 {
-		t.Fatalf("expected CacheSchemaVersion=2, got %d", CacheSchemaVersion)
+	if CacheSchemaVersion != 3 {
+		t.Fatalf("expected CacheSchemaVersion=3, got %d", CacheSchemaVersion)
 	}
 }
 

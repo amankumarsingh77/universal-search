@@ -2,6 +2,7 @@ package search
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"findo/internal/query"
@@ -167,17 +168,7 @@ func shouldClauseMatchesFile(clause query.Clause, file store.FileRecord) bool {
 		if !ok {
 			return false
 		}
-		return len(sv) > 0 && len(fieldVal) >= len(sv) && containsStr(fieldVal, sv)
-	}
-	return false
-}
-
-// containsStr is a simple substring check (used to avoid importing strings here).
-func containsStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
+		return len(sv) > 0 && len(fieldVal) >= len(sv) && strings.Contains(fieldVal, sv)
 	}
 	return false
 }

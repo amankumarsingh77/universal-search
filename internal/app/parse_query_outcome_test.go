@@ -117,14 +117,14 @@ func TestParseQuery_OutcomeTimeout_SetsWarning_NoCacheWrite(t *testing.T) {
 // TestParseQuery_OutcomeFailed_SetsErrorCode_NoCacheWrite — REQ-007
 // On OutcomeFailed, ErrorCode must be ERR_QUERY_PARSE_FAILED, Chips must be
 // empty, and cache.Set must NOT be called.
-// Query uses "documents" to trigger the LLM heuristic.
+// Query uses "photos" (fileTypeRe) + >6 tokens to ensure LLM invocation.
 func TestParseQuery_OutcomeFailed_SetsErrorCode_NoCacheWrite(t *testing.T) {
 	parser := &stubLLMParser{result: query.ParseResult{Outcome: query.OutcomeFailed}}
 	cache := &stubParsedQueryCache{}
 
 	a := newOutcomeTestApp(t, parser, cache)
-	// "documents" triggers fileTypeRe; LLM will be invoked.
-	result, err := a.ParseQuery("budget documents from yesterday")
+	// "photos" triggers fileTypeRe; >6 tokens ensures LLM is invoked.
+	result, err := a.ParseQuery("show me all my vacation photos from the beach resort trip")
 	if err != nil {
 		t.Fatalf("ParseQuery returned error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestParseQuery_OutcomeFailed_SetsErrorCode_NoCacheWrite(t *testing.T) {
 // TestParseQuery_OutcomeRateLimited_PropagatesRetryAfterMs_NoCacheWrite — REQ-008
 // On OutcomeRateLimited, ErrorCode must be ERR_QUERY_RATE_LIMITED, RetryAfterMs
 // must be propagated, Chips must be empty, and cache.Set must NOT be called.
-// Query uses "documents" to trigger the LLM heuristic.
+// Query uses "photos" (fileTypeRe) + >6 tokens to ensure LLM invocation.
 func TestParseQuery_OutcomeRateLimited_PropagatesRetryAfterMs_NoCacheWrite(t *testing.T) {
 	const wantRetryAfterMs int64 = 15000
 	parser := &stubLLMParser{result: query.ParseResult{
@@ -152,8 +152,8 @@ func TestParseQuery_OutcomeRateLimited_PropagatesRetryAfterMs_NoCacheWrite(t *te
 	cache := &stubParsedQueryCache{}
 
 	a := newOutcomeTestApp(t, parser, cache)
-	// "documents" triggers fileTypeRe; LLM will be invoked.
-	result, err := a.ParseQuery("budget documents from yesterday")
+	// "photos" triggers fileTypeRe; >6 tokens ensures LLM is invoked.
+	result, err := a.ParseQuery("show me all my vacation photos from the beach resort trip")
 	if err != nil {
 		t.Fatalf("ParseQuery returned error: %v", err)
 	}

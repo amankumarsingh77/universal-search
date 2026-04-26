@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -776,5 +779,422 @@ func TestGrammarParse_TypoCorrectionExt(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected extension=.pdf after correcting 'pef', got %+v", spec.Must)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseNaturalLanguage tests
+// ---------------------------------------------------------------------------
+
+func TestParseNaturalLanguage(t *testing.T) {
+	now := time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name        string
+		input       string
+		wantOk      bool
+		wantKind    string
+		wantHasTime bool
+		wantSem     string
+	}{
+		{
+			name:        "photos from last week",
+			input:       "photos from last week",
+			wantOk:      true,
+			wantKind:    "image",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "my photos from last week",
+			input:       "my photos from last week",
+			wantOk:      true,
+			wantKind:    "image",
+			wantHasTime: true,
+			wantSem:     "my",
+		},
+		{
+			name:        "photos last week bare temporal",
+			input:       "photos last week",
+			wantOk:      true,
+			wantKind:    "image",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "videos yesterday",
+			input:       "videos yesterday",
+			wantOk:      true,
+			wantKind:    "video",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "my vacation photos from today",
+			input:       "my vacation photos from today",
+			wantOk:      true,
+			wantKind:    "image",
+			wantHasTime: true,
+			wantSem:     "my vacation",
+		},
+		{
+			name:   "find pictures not matched without temporal",
+			input:  "find pictures",
+			wantOk: false,
+		},
+		{
+			name:        "documents single word",
+			input:       "documents",
+			wantOk:      true,
+			wantKind:    "document",
+			wantHasTime: false,
+			wantSem:     "",
+		},
+		{
+			name:        "my documents",
+			input:       "my documents",
+			wantOk:      true,
+			wantKind:    "document",
+			wantHasTime: false,
+			wantSem:     "",
+		},
+		{
+			name:        "videos on march 12th",
+			input:       "videos on march 12th",
+			wantOk:      true,
+			wantKind:    "video",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "music from this week",
+			input:       "music from this week",
+			wantOk:      true,
+			wantKind:    "audio",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "show me screenshots from yesterday",
+			input:       "show me screenshots from yesterday",
+			wantOk:      true,
+			wantKind:    "image",
+			wantHasTime: true,
+			wantSem:     "show me",
+		},
+		{
+			name:   "random query no patterns",
+			input:  "random query no patterns",
+			wantOk: false,
+		},
+		{
+			name:   "today no kind word",
+			input:  "today",
+			wantOk: false,
+		},
+		{
+			name:   "photos from beach no time not matched",
+			input:  "photos from beach",
+			wantOk: false,
+		},
+		{
+			name:   "code PDF files not matched without temporal",
+			input:  "code PDF files",
+			wantOk: false,
+		},
+		{
+			name:        "photos from last month",
+			input:       "photos from last month",
+			wantOk:      true,
+			wantKind:    "image",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "videos before 26th april",
+			input:       "videos before 26th april",
+			wantOk:      true,
+			wantKind:    "video",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "photos after march 1",
+			input:       "photos after march 1",
+			wantOk:      true,
+			wantKind:    "image",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "documents since last month",
+			input:       "documents since last month",
+			wantOk:      true,
+			wantKind:    "document",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			name:        "videos before yesterday",
+			input:       "videos before yesterday",
+			wantOk:      true,
+			wantKind:    "video",
+			wantHasTime: true,
+			wantSem:     "",
+		},
+		{
+			// Dateparser greedily consumes the trailing "by" as filler, leaving
+			// "aman" as the residual semantic text. Acceptable: the operative
+			// content word is preserved.
+			name:        "photos before 26 april by aman",
+			input:       "photos before 26 april by aman",
+			wantOk:      true,
+			wantKind:    "image",
+			wantHasTime: true,
+			wantSem:     "aman",
+		},
+		{
+			name:   "videos before with no date declines",
+			input:  "videos before",
+			wantOk: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, sem, ok := parseNaturalLanguage(tc.input, now)
+			if ok != tc.wantOk {
+				t.Fatalf("ok: got %v, want %v", ok, tc.wantOk)
+			}
+			if !tc.wantOk {
+				return
+			}
+
+			foundKind := false
+			for _, c := range spec.Must {
+				if c.Field == FieldFileType && c.Op == OpEq {
+					if v, _ := c.Value.(string); v == tc.wantKind {
+						foundKind = true
+					}
+				}
+			}
+			require.True(t, foundKind, "expected Must clause file_type=%s, got %+v", tc.wantKind, spec.Must)
+
+			foundTime := false
+			for _, c := range spec.Must {
+				if c.Field == FieldModifiedAt {
+					foundTime = true
+				}
+			}
+			if tc.wantHasTime {
+				assert.True(t, foundTime, "expected FieldModifiedAt clause, got none")
+			} else {
+				assert.False(t, foundTime, "did not expect FieldModifiedAt clause")
+			}
+
+			assert.Equal(t, tc.wantSem, sem, "semantic text mismatch")
+		})
+	}
+}
+
+// TestParseNaturalLanguageDirectionalDates asserts the operator and that
+// directional date phrases produce a single one-sided modified_at clause —
+// not a closed range — so "before X" doesn't accidentally include dates
+// after X via a stale upper-bound clause.
+func TestParseNaturalLanguageDirectionalDates(t *testing.T) {
+	now := time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name   string
+		input  string
+		wantOp Op
+	}{
+		{"before emits OpLt", "videos before 26th april", OpLt},
+		{"after emits OpGte", "photos after march 1", OpGte},
+		{"since emits OpGte", "documents since last month", OpGte},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec, _, ok := parseNaturalLanguage(tc.input, now)
+			require.True(t, ok)
+
+			var dateClauses []Clause
+			for _, c := range spec.Must {
+				if c.Field == FieldModifiedAt {
+					dateClauses = append(dateClauses, c)
+				}
+			}
+			require.Len(t, dateClauses, 1, "expected exactly one modified_at clause, got %+v", dateClauses)
+			assert.Equal(t, tc.wantOp, dateClauses[0].Op)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// extractSemanticText tests
+// ---------------------------------------------------------------------------
+
+func TestExtractSemanticText(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		exclude []string
+		want    string
+	}{
+		{
+			name:    "remove kind and time words",
+			input:   "my photos from yesterday",
+			exclude: []string{"photos", "from", "yesterday"},
+			want:    "my",
+		},
+		{
+			name:    "all words excluded",
+			input:   "photos from last week",
+			exclude: []string{"photos", "from", "last", "week"},
+			want:    "",
+		},
+		{
+			name:    "preserve case",
+			input:   "My Photos from Yesterday",
+			exclude: []string{"photos", "from", "yesterday"},
+			want:    "My",
+		},
+		{
+			name:    "no exclusions",
+			input:   "find my documents",
+			exclude: []string{},
+			want:    "find my documents",
+		},
+		{
+			name:    "all words excluded single",
+			input:   "photos",
+			exclude: []string{"photos"},
+			want:    "",
+		},
+		{
+			name:    "partial exclusion",
+			input:   "find photos of cats",
+			exclude: []string{"photos", "of"},
+			want:    "find cats",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractSemanticText(tc.input, tc.exclude)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// findKindWord tests
+// ---------------------------------------------------------------------------
+
+func TestFindKindWord(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		wantIdx  int
+		wantKind string
+	}{
+		{
+			name:     "kind at start",
+			input:    "photos from last week",
+			wantIdx:  0,
+			wantKind: "image",
+		},
+		{
+			name:     "kind in middle",
+			input:    "my photos from yesterday",
+			wantIdx:  1,
+			wantKind: "image",
+		},
+		{
+			name:     "kind at end",
+			input:    "find my docs please",
+			wantIdx:  2,
+			wantKind: "document",
+		},
+		{
+			name:    "no kind word",
+			input:   "no patterns here",
+			wantIdx: -1,
+		},
+		{
+			name:     "code maps to text",
+			input:    "code is great",
+			wantIdx:  0,
+			wantKind: "text",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			words := strings.Fields(strings.ToLower(tc.input))
+			idx, kind := findKindWord(words)
+			assert.Equal(t, tc.wantIdx, idx, "index mismatch")
+			if tc.wantIdx == -1 {
+				assert.Equal(t, "", kind, "kind should be empty when not found")
+			} else {
+				assert.Equal(t, tc.wantKind, kind, "kind mismatch")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// matchTemporalPattern tests
+// ---------------------------------------------------------------------------
+
+func TestMatchTemporalPattern(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+		want string
+	}{
+		{
+			name: "exact match last week",
+			s:    "last week",
+			want: "last week",
+		},
+		{
+			name: "prefix match last week with trailing",
+			s:    "last week something",
+			want: "last week",
+		},
+		{
+			name: "exact match today",
+			s:    "today",
+			want: "today",
+		},
+		{
+			name: "prefix match today with trailing",
+			s:    "today and tomorrow",
+			want: "today",
+		},
+		{
+			name: "last month not last prefix",
+			s:    "last month",
+			want: "last month",
+		},
+		{
+			name: "no match random text",
+			s:    "random text",
+			want: "",
+		},
+		{
+			name: "yesterday with trailing",
+			s:    "yesterday files",
+			want: "yesterday",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchTemporalPattern(tc.s)
+			assert.Equal(t, tc.want, got)
+		})
 	}
 }

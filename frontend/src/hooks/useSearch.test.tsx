@@ -171,4 +171,26 @@ describe('useSearch', () => {
     // errorCode should be cleared synchronously by the keystroke effect
     expect(result.current.errorCode).toBe('');
   });
+
+  it('issues exactly one SearchWithFilters call when ParseQuery resolves', async () => {
+    mockParseQuery.mockResolvedValue({
+      chips: [
+        { clauseKey: 'file_type=video', label: 'video', field: 'file_type', op: 'eq', value: 'video' },
+      ],
+      semanticQuery: 'bowling',
+      hasFilters: true,
+      cacheHit: false,
+      isOffline: false,
+    });
+
+    const { result } = renderHook(() => useSearch());
+
+    act(() => { result.current.setQuery('bowling video'); });
+
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    // Pre-fix this would be 2: one from the 300ms debounce (stale state) and
+    // one from the chip-change effect after parse completes.
+    expect(mockSearchWithFilters).toHaveBeenCalledTimes(1);
+  });
 });

@@ -28,6 +28,15 @@ export function useSearch() {
   const preEmbedRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchSeqRef = useRef(0);
+  // True from the moment a parse timer is scheduled until the resulting
+  // ParseQuery resolves. Used to suppress the keystroke-debounced search so
+  // we don't fire one server call with stale semanticQuery before parse and
+  // a second one (via the chip-change effect) right after parse completes.
+  const parsePendingRef = useRef(false);
+  // Increments each time a parse is scheduled; only the most recent
+  // invocation may clear parsePendingRef to avoid a stale call resetting
+  // the flag for an in-flight newer parse.
+  const parseSeqRef = useRef(0);
 
   // Track current phase outside reducer to avoid stale closure issues
   const phaseRef = useRef(nlState.phase);
@@ -133,6 +142,7 @@ export function useSearch() {
 
   const runParseQuery = useCallback(async (q: string) => {
     if (!q.trim()) return;
+    const seq = parseSeqRef.current;
     try {
       const result = await ParseQuery(q);
       if (result) {
@@ -169,6 +179,13 @@ export function useSearch() {
       }
     } catch {
       // Ignore parse errors — fall back to plain search
+    } finally {
+      // Only the most recent parse may clear the gate. Stale resolutions
+      // from a previous keystroke must not unblock the keystroke-debounced
+      // search for the newer query that's still pending its own parse.
+      if (seq === parseSeqRef.current) {
+        parsePendingRef.current = false;
+      }
     }
   }, []);
 
@@ -212,21 +229,27 @@ export function useSearch() {
         PreEmbedQuery(q).catch(() => {});
       }, 150);
 
-      // 800ms idle timer for ParseQuery
+      // Mark a parse as pending before scheduling the timer so the 300ms
+      // search debounce below knows to defer to the post-parse path.
+      parseSeqRef.current += 1;
+      parsePendingRef.current = true;
+
+      // 800ms idle timer for ParseQuery.
       parseTimerRef.current = setTimeout(() => {
-        // Transition out of typing phase so PARSE_COMPLETE is accepted
-        dispatch({
-          type: 'PARSE_COMPLETE',
-          payload: { chips: [], semanticQuery: '' },
-        });
         runParseQuery(q);
       }, 800);
+    } else {
+      // No parse will fire for short queries — nothing to wait on.
+      parsePendingRef.current = false;
     }
 
     // 300ms debounce for search — always a full server call (no chips yet)
     debounceRef.current = setTimeout(() => {
       // Skip if a parse error has already fired (rare race, but guards it)
       if (errorCodeRef.current) return;
+      // If a parse is in flight, let the post-parse chip-change effect drive
+      // the canonical search instead of firing a duplicate with stale state.
+      if (parsePendingRef.current) return;
       performSearch(q, nlState.semanticQuery, nlState.chips, nlState.chipDenyList);
     }, 300);
 

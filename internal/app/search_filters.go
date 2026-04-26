@@ -206,7 +206,11 @@ func (a *App) getQueryVector(emb embedder.Embedder, queryText string) ([]float32
 		return nil, err
 	}
 	if a.store != nil {
-		go func() { a.store.SetQueryCache(queryText, vec) }()
+		go func() {
+			if err := a.store.SetQueryCache(queryText, vec); err != nil {
+				a.logger.Warn("search: failed to cache query vector", "error", err)
+			}
+		}()
 	}
 	return vec, nil
 }

@@ -36,7 +36,11 @@ func (a *App) Search(queryText string) ([]SearchResultDTO, error) {
 			return nil, apperr.Wrap(apperr.ErrEmbedFailed.Code, "embedding failed", err)
 		}
 		if a.store != nil {
-			go func() { a.store.SetQueryCache(queryText, vec) }()
+			go func() {
+				if err := a.store.SetQueryCache(queryText, vec); err != nil {
+					a.logger.Warn("search: failed to cache query vector", "error", err)
+				}
+			}()
 		}
 	}
 

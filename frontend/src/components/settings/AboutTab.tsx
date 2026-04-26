@@ -49,10 +49,10 @@ function InfoRow({ label, value, last }: { label: string; value: string; last?: 
       justifyContent: 'space-between',
       alignItems: 'center',
       padding: '12px 16px',
-      borderBottom: last ? 'none' : '1px solid #1B1D22',
+      borderBottom: last ? 'none' : '1px solid var(--border)',
     }}>
-      <span style={{ fontSize: 14, color: '#8A8F98', fontFamily: 'var(--font-sans, system-ui)' }}>{label}</span>
-      <span style={{ fontSize: 14, color: '#E6E8EC', fontFamily: 'var(--font-mono, monospace)' }}>{value}</span>
+      <span style={{ fontSize: 14, color: 'var(--text-secondary)', fontFamily: 'var(--font-sans)' }}>{label}</span>
+      <span style={{ fontSize: 14, color: 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{value}</span>
     </div>
   );
 }
@@ -61,21 +61,21 @@ const styles: Record<string, React.CSSProperties> = {
   heading: {
     fontSize: 28,
     fontWeight: 700,
-    color: '#E6E8EC',
+    color: 'var(--text-primary)',
     margin: '0 0 8px',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   subtext: {
     fontSize: 14,
-    color: '#8A8F98',
+    color: 'var(--text-secondary)',
     margin: 0,
     lineHeight: 1.6,
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   infoCard: {
-    background: '#0F1014',
-    border: '1px solid #1B1D22',
-    borderRadius: 10,
+    background: 'var(--bg-surface-2, var(--bg-surface))',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-lg, 12px)',
     overflow: 'hidden',
   },
   linkBtn: {
@@ -83,20 +83,20 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 8,
     background: 'transparent',
-    border: '1px solid #23252B',
-    borderRadius: 8,
-    color: '#C8CDD4',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-md, 8px)',
+    color: 'var(--text-secondary)',
     fontSize: 14,
     padding: '10px 14px',
     cursor: 'pointer',
     textAlign: 'left' as const,
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   legal: {
     fontSize: 12,
-    color: '#4A4E57',
+    color: 'var(--text-tertiary)',
     margin: 0,
     lineHeight: 1.6,
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
 };

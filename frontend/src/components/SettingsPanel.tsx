@@ -85,11 +85,11 @@ export function SettingsPanel({
               onClick={() => onTabChange(item.id)}
               style={{
                 ...styles.navItem,
-                background: activeTab === item.id ? '#1A1C22' : 'transparent',
-                color: activeTab === item.id ? '#E6E8EC' : '#8A8F98',
+                background: activeTab === item.id ? 'var(--bg-selected)' : 'transparent',
+                color: activeTab === item.id ? 'var(--text-primary)' : 'var(--text-secondary)',
               }}
             >
-              <span style={{ color: activeTab === item.id ? '#E6E8EC' : '#6B6F76' }}>
+              <span style={{ color: activeTab === item.id ? 'var(--text-primary)' : 'var(--text-tertiary)' }}>
                 {item.icon}
               </span>
               {item.label}
@@ -119,7 +119,7 @@ const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: 'absolute',
     inset: 0,
-    background: '#0F1014',
+    background: 'var(--bg-surface)',
     display: 'flex',
     flexDirection: 'column',
     zIndex: 1500,
@@ -131,36 +131,36 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     padding: '0 16px',
     height: 56,
-    borderBottom: '1px solid #1B1D22',
+    borderBottom: '1px solid var(--border)',
     flexShrink: 0,
   },
   backBtn: {
     background: 'none',
     border: 'none',
-    color: '#8A8F98',
+    color: 'var(--text-secondary)',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     padding: '6px',
-    borderRadius: 6,
+    borderRadius: 'var(--radius-sm, 4px)',
     marginRight: 8,
   },
   headerTitle: {
     flex: 1,
     fontSize: 16,
     fontWeight: 700,
-    color: '#E6E8EC',
-    fontFamily: 'var(--font-sans, system-ui)',
+    color: 'var(--text-primary)',
+    fontFamily: 'var(--font-sans)',
   },
   closeBtn: {
     background: 'none',
     border: 'none',
-    color: '#8A8F98',
+    color: 'var(--text-secondary)',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     padding: '6px',
-    borderRadius: 6,
+    borderRadius: 'var(--radius-sm, 4px)',
   },
   body: {
     display: 'flex',
@@ -170,7 +170,7 @@ const styles: Record<string, React.CSSProperties> = {
   rail: {
     width: 200,
     padding: '12px 8px',
-    borderRight: '1px solid #1B1D22',
+    borderRight: '1px solid var(--border)',
     display: 'flex',
     flexDirection: 'column',
     gap: 2,
@@ -182,11 +182,11 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
     padding: '9px 12px',
-    borderRadius: 8,
+    borderRadius: 'var(--radius-md, 8px)',
     border: 'none',
     cursor: 'pointer',
     fontSize: 14,
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
     textAlign: 'left',
     transition: 'background 0.1s, color 0.1s',
     width: '100%',

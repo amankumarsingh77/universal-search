@@ -127,7 +127,7 @@ export function FoldersTab() {
         <div style={styles.folderList}>
           {folders.map((folder) => (
             <div key={folder} style={styles.folderRow}>
-              <Folder size={18} color="#6B6F76" style={{ flexShrink: 0, marginRight: 12 }} />
+              <Folder size={18} color="var(--text-tertiary)" style={{ flexShrink: 0, marginRight: 12 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={styles.folderPath}>{shortenPath(folder)}</div>
                 <div style={styles.folderMeta}>
@@ -136,12 +136,12 @@ export function FoldersTab() {
               </div>
               <span style={{
                 ...styles.statusPill,
-                background: reindexingFolder === folder ? 'rgba(59,130,246,0.15)' : 'rgba(34,197,94,0.15)',
-                color: reindexingFolder === folder ? '#60A5FA' : '#4ADE80',
+                background: reindexingFolder === folder ? 'rgba(124,111,224,0.15)' : 'rgba(16,185,129,0.15)',
+                color: reindexingFolder === folder ? 'var(--accent, #7c6fe0)' : 'var(--accent-green)',
               }}>
                 <span style={{
                   width: 6, height: 6, borderRadius: '50%',
-                  background: reindexingFolder === folder ? '#60A5FA' : '#4ADE80',
+                  background: reindexingFolder === folder ? 'var(--accent, #7c6fe0)' : 'var(--accent-green)',
                   display: 'inline-block', marginRight: 5
                 }} />
                 {reindexingFolder === folder ? 'Indexing' : 'Up to date'}
@@ -159,7 +159,7 @@ export function FoldersTab() {
                     <button style={styles.dropItem} onClick={() => handleReindex(folder)}>
                       <RotateCcw size={13} style={{ marginRight: 6 }} /> Rescan
                     </button>
-                    <button style={{ ...styles.dropItem, color: '#F87171' }} onClick={() => { setConfirm({ path: folder }); setOpenMenu(null); }}>
+                    <button style={{ ...styles.dropItem, color: '#e53935' }} onClick={() => { setConfirm({ path: folder }); setOpenMenu(null); }}>
                       <X size={13} style={{ marginRight: 6 }} /> Remove
                     </button>
                   </div>
@@ -223,68 +223,68 @@ const styles: Record<string, React.CSSProperties> = {
   heading: {
     fontSize: 22,
     fontWeight: 700,
-    color: '#E6E8EC',
+    color: 'var(--text-primary)',
     margin: '0 0 8px',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   subtext: {
     fontSize: 14,
-    color: '#8A8F98',
+    color: 'var(--text-secondary)',
     margin: '0 0 20px',
     lineHeight: 1.5,
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   addBtn: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
-    background: '#5865F2',
+    background: 'var(--accent, #7c6fe0)',
     border: 'none',
-    borderRadius: 8,
+    borderRadius: 'var(--radius-md, 8px)',
     color: '#fff',
     fontSize: 14,
     fontWeight: 600,
     padding: '8px 16px',
     cursor: 'pointer',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   metaBadge: {
     fontSize: 13,
-    color: '#6B6F76',
+    color: 'var(--text-tertiary)',
   },
   empty: {
     padding: '24px 0',
     fontSize: 14,
-    color: '#6B6F76',
+    color: 'var(--text-tertiary)',
     textAlign: 'center',
   },
   folderList: {
     display: 'flex',
     flexDirection: 'column',
     gap: 2,
-    border: '1px solid #1B1D22',
-    borderRadius: 10,
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-lg, 12px)',
     overflow: 'hidden',
   },
   folderRow: {
     display: 'flex',
     alignItems: 'center',
     padding: '12px 16px',
-    borderBottom: '1px solid #1B1D22',
-    background: '#0F1014',
+    borderBottom: '1px solid var(--border)',
+    background: 'var(--bg-surface)',
     gap: 8,
   },
   folderPath: {
     fontSize: 14,
-    color: '#E6E8EC',
-    fontFamily: 'var(--font-mono, monospace)',
+    color: 'var(--text-primary)',
+    fontFamily: 'var(--font-mono)',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap' as const,
   },
   folderMeta: {
     fontSize: 12,
-    color: '#6B6F76',
+    color: 'var(--text-tertiary)',
     marginTop: 2,
   },
   statusPill: {
@@ -300,7 +300,7 @@ const styles: Record<string, React.CSSProperties> = {
   iconBtn: {
     background: 'none',
     border: 'none',
-    color: '#6B6F76',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
     padding: '4px',
     display: 'flex',
@@ -311,9 +311,9 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'absolute',
     right: 0,
     top: '100%',
-    background: '#15171C',
-    border: '1px solid #262931',
-    borderRadius: 8,
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-md, 8px)',
     boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
     zIndex: 100,
     minWidth: 130,
@@ -325,25 +325,25 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     background: 'none',
     border: 'none',
-    color: '#E6E8EC',
+    color: 'var(--text-primary)',
     fontSize: 13,
     padding: '7px 12px',
     cursor: 'pointer',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
     textAlign: 'left' as const,
   },
   confirmOverlay: {
     marginTop: 12,
-    background: '#15171C',
-    border: '1px solid #262931',
-    borderRadius: 8,
+    background: 'var(--bg-surface-2, var(--bg-surface))',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-md, 8px)',
     padding: 14,
   },
   confirmText: {
     fontSize: 14,
-    color: '#E6E8EC',
+    color: 'var(--text-primary)',
     marginBottom: 10,
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   confirmBtns: {
     display: 'flex',
@@ -353,29 +353,29 @@ const styles: Record<string, React.CSSProperties> = {
   dangerBtn: {
     background: '#e53935',
     border: 'none',
-    borderRadius: 6,
+    borderRadius: 'var(--radius-sm, 4px)',
     color: '#fff',
     fontSize: 12,
     padding: '6px 12px',
     cursor: 'pointer',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   secondaryBtn: {
     background: 'transparent',
-    border: '1px solid #23252B',
-    borderRadius: 6,
-    color: '#C8CDD4',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-sm, 4px)',
+    color: 'var(--text-secondary)',
     fontSize: 12,
     padding: '6px 12px',
     cursor: 'pointer',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   sectionLabel: {
     fontSize: 14,
     fontWeight: 600,
-    color: '#C8CDD4',
+    color: 'var(--text-secondary)',
     margin: '0 0 12px',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   chipCluster: {
     display: 'flex',
@@ -388,17 +388,17 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 6,
     padding: '5px 10px',
-    background: '#15171C',
-    border: '1px solid #23252B',
-    borderRadius: 6,
+    background: 'var(--bg-surface-2, var(--bg-surface))',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-sm, 4px)',
     fontSize: 13,
-    color: '#C8CDD4',
-    fontFamily: 'var(--font-mono, monospace)',
+    color: 'var(--text-secondary)',
+    fontFamily: 'var(--font-mono)',
   },
   chipRemove: {
     background: 'none',
     border: 'none',
-    color: '#6B6F76',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
     padding: 0,
     display: 'flex',
@@ -411,24 +411,24 @@ const styles: Record<string, React.CSSProperties> = {
   },
   patternInput: {
     background: 'transparent',
-    border: '1px dashed #23252B',
-    borderRadius: 6,
-    color: '#6B6F76',
+    border: '1px dashed var(--border)',
+    borderRadius: 'var(--radius-sm, 4px)',
+    color: 'var(--text-tertiary)',
     fontSize: 13,
     padding: '5px 10px',
-    fontFamily: 'var(--font-mono, monospace)',
+    fontFamily: 'var(--font-mono)',
     outline: 'none',
     cursor: 'text',
     width: 120,
   },
   addPatternBtn: {
-    background: '#23252B',
+    background: 'var(--bg-surface-2, var(--bg-surface))',
     border: 'none',
-    borderRadius: 6,
-    color: '#C8CDD4',
+    borderRadius: 'var(--radius-sm, 4px)',
+    color: 'var(--text-secondary)',
     fontSize: 12,
     padding: '5px 10px',
     cursor: 'pointer',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
 };

@@ -34,16 +34,16 @@ function MenuItem({ icon, label, shortcut, onClick }: MenuItemProps) {
         border: 'none',
         cursor: 'pointer',
         textAlign: 'left',
-        color: '#E6E8EC',
+        color: 'var(--text-primary)',
         fontSize: 14,
         fontFamily: 'var(--font-sans, system-ui)',
         borderRadius: 4,
       }}
     >
-      <span style={{ color: '#8A8F98', flexShrink: 0 }}>{icon}</span>
+      <span style={{ color: 'var(--text-secondary)', flexShrink: 0 }}>{icon}</span>
       <span style={{ flex: 1 }}>{label}</span>
       {shortcut && (
-        <span style={{ color: '#6B6F76', fontSize: 12 }}>{shortcut}</span>
+        <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{shortcut}</span>
       )}
     </button>
   );
@@ -109,9 +109,9 @@ export function SettingsPopover({ open, onClose, onOpenSettings }: SettingsPopov
         top: 56,
         right: 12,
         width: 280,
-        background: '#15171C',
-        border: '1px solid #262931',
-        borderRadius: 10,
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg, 12px)',
         boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
         zIndex: 2000,
         padding: '6px 0',
@@ -127,7 +127,7 @@ export function SettingsPopover({ open, onClose, onOpenSettings }: SettingsPopov
         fontWeight: 600,
         letterSpacing: '0.08em',
         textTransform: 'uppercase' as const,
-        color: '#6B6F76',
+        color: 'var(--text-tertiary)',
         fontFamily: 'var(--font-sans, system-ui)',
       }}>
         Settings
@@ -150,7 +150,7 @@ export function SettingsPopover({ open, onClose, onOpenSettings }: SettingsPopov
         onClick={() => handleOpenTab('hotkey')}
       />
 
-      <div style={{ height: 1, background: '#1B1D22', margin: '4px 0' }} />
+      <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
 
       <MenuItem
         icon={<RefreshCw size={16} />}
@@ -164,7 +164,7 @@ export function SettingsPopover({ open, onClose, onOpenSettings }: SettingsPopov
         onClick={handlePause}
       />
 
-      <div style={{ height: 1, background: '#1B1D22', margin: '4px 0' }} />
+      <div style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
 
       <MenuItem
         icon={<Info size={16} />}

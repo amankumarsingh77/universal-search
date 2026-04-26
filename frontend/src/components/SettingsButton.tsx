@@ -20,16 +20,17 @@ export function SettingsButton({ onClick }: SettingsButtonProps) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: hovered ? '#1E2028' : '#16181D',
-        border: '1px solid #23252B',
-        borderRadius: 8,
+        background: hovered ? 'var(--bg-hover)' : 'transparent',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-md, 8px)',
         cursor: 'pointer',
         flexShrink: 0,
         transition: 'background 0.1s',
+        color: 'var(--text-secondary)',
       }}
       {...{ '--wails-draggable': 'no-drag' } as React.HTMLAttributes<HTMLButtonElement>}
     >
-      <Settings size={16} color="#B4B8C0" strokeWidth={2} />
+      <Settings size={16} strokeWidth={2} />
     </button>
   );
 }

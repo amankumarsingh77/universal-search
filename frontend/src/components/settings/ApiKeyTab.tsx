@@ -61,7 +61,7 @@ export function ApiKeyTab({ onSuccess, onError }: ApiKeyTabProps) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <label style={styles.label}>API key</label>
         <div style={styles.inputWrapper}>
-          <KeyRound size={16} color="#6B6F76" style={{ flexShrink: 0 }} />
+          <KeyRound size={16} color="var(--text-tertiary)" style={{ flexShrink: 0 }} />
           <input
             type={showKey ? 'text' : 'password'}
             value={key}
@@ -84,10 +84,10 @@ export function ApiKeyTab({ onSuccess, onError }: ApiKeyTabProps) {
 
       {status === 'connected' && (
         <div style={styles.statusConnected}>
-          <CheckCircle2 size={18} color="#4ADE80" />
+          <CheckCircle2 size={18} color="var(--accent-green)" />
           <div>
-            <div style={{ fontWeight: 600, color: '#4ADE80', fontSize: 14 }}>Connected</div>
-            <div style={{ fontSize: 13, color: '#8A8F98', marginTop: 2 }}>
+            <div style={{ fontWeight: 600, color: 'var(--accent-green)', fontSize: 14 }}>Connected</div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
               {statusMsg || 'Last verified · 768-dim embeddings'}
             </div>
           </div>
@@ -96,10 +96,10 @@ export function ApiKeyTab({ onSuccess, onError }: ApiKeyTabProps) {
 
       {status === 'error' && (
         <div style={styles.statusError}>
-          <XCircle size={18} color="#F87171" />
+          <XCircle size={18} color="#e53935" />
           <div>
-            <div style={{ fontWeight: 600, color: '#F87171', fontSize: 14 }}>Invalid key</div>
-            <div style={{ fontSize: 13, color: '#8A8F98', marginTop: 2 }}>{statusMsg}</div>
+            <div style={{ fontWeight: 600, color: '#e53935', fontSize: 14 }}>Invalid key</div>
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>{statusMsg}</div>
           </div>
         </div>
       )}
@@ -127,30 +127,30 @@ const styles: Record<string, React.CSSProperties> = {
   heading: {
     fontSize: 22,
     fontWeight: 700,
-    color: '#E6E8EC',
+    color: 'var(--text-primary)',
     margin: '0 0 8px',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   subtext: {
     fontSize: 14,
-    color: '#8A8F98',
+    color: 'var(--text-secondary)',
     margin: 0,
     lineHeight: 1.6,
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   label: {
     fontSize: 13,
-    color: '#C8CDD4',
+    color: 'var(--text-secondary)',
     fontWeight: 500,
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   inputWrapper: {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
-    background: '#0F1014',
-    border: '1px solid #23252B',
-    borderRadius: 10,
+    background: 'var(--bg-surface-2, var(--bg-surface))',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-lg, 12px)',
     padding: '10px 14px',
   },
   input: {
@@ -158,14 +158,14 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     border: 'none',
     outline: 'none',
-    color: '#E6E8EC',
+    color: 'var(--text-primary)',
     fontSize: 14,
-    fontFamily: 'var(--font-mono, monospace)',
+    fontFamily: 'var(--font-mono)',
   },
   eyeBtn: {
     background: 'none',
     border: 'none',
-    color: '#6B6F76',
+    color: 'var(--text-tertiary)',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
@@ -176,40 +176,40 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'flex-start',
     gap: 12,
-    background: 'rgba(34,197,94,0.08)',
-    border: '1px solid rgba(34,197,94,0.2)',
-    borderRadius: 10,
+    background: 'rgba(16,185,129,0.08)',
+    border: '1px solid rgba(16,185,129,0.2)',
+    borderRadius: 'var(--radius-lg, 12px)',
     padding: '12px 16px',
   },
   statusError: {
     display: 'flex',
     alignItems: 'flex-start',
     gap: 12,
-    background: 'rgba(248,113,113,0.08)',
-    border: '1px solid rgba(248,113,113,0.2)',
-    borderRadius: 10,
+    background: 'rgba(229,57,53,0.08)',
+    border: '1px solid rgba(229,57,53,0.2)',
+    borderRadius: 'var(--radius-lg, 12px)',
     padding: '12px 16px',
   },
   primaryBtn: {
-    background: '#5865F2',
+    background: 'var(--accent, #7c6fe0)',
     border: 'none',
-    borderRadius: 10,
+    borderRadius: 'var(--radius-lg, 12px)',
     color: '#fff',
     fontSize: 14,
     fontWeight: 600,
     padding: '10px 20px',
     cursor: 'pointer',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
   secondaryBtn: {
     background: 'transparent',
-    border: '1px solid #23252B',
-    borderRadius: 10,
-    color: '#C8CDD4',
+    border: '1px solid var(--border)',
+    borderRadius: 'var(--radius-lg, 12px)',
+    color: 'var(--text-secondary)',
     fontSize: 14,
     fontWeight: 500,
     padding: '10px 20px',
     cursor: 'pointer',
-    fontFamily: 'var(--font-sans, system-ui)',
+    fontFamily: 'var(--font-sans)',
   },
 };

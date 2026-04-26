@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Folder, MoreHorizontal, RotateCcw, X } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { Folder, MoreHorizontal, RotateCcw, X, Plus } from 'lucide-react';
 import { GetFolders, RemoveFolder, PickAndAddFolder, ReindexFolder, GetIgnoredFolders, AddIgnoredFolder, RemoveIgnoredFolder } from '../../../wailsjs/go/app/App';
 import { EventsOn, EventsOff } from '../../../wailsjs/runtime/runtime';
 import { useHideSuppression } from '../../hooks/useHideSuppression';
@@ -14,7 +14,11 @@ export function FoldersTab() {
   const [reindexingFolder, setReindexingFolder] = useState<string | null>(null);
   const [pickingFolder, setPickingFolder] = useState(false);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [patternFocused, setPatternFocused] = useState(false);
+  const [addingPattern, setAddingPattern] = useState(false);
+  const menuBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const patternInputRef = useRef<HTMLInputElement>(null);
   const { withSuppressedHide } = useHideSuppression();
 
   const loadFolders = useCallback(async () => {
@@ -44,6 +48,53 @@ export function FoldersTab() {
     EventsOn('folders-changed', () => loadFolders());
     return () => EventsOff('folders-changed');
   }, [loadFolders]);
+
+  // Position the floating row-menu next to its trigger button. Using fixed
+  // positioning lets it escape any overflow:hidden ancestors.
+  useLayoutEffect(() => {
+    if (!openMenu) {
+      setMenuPos(null);
+      return;
+    }
+    const btn = menuBtnRefs.current[openMenu];
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const menuWidth = 150;
+    const menuHeight = 78; // roughly 2 items × 32px + padding
+    const fitsBelow = rect.bottom + menuHeight + 8 < window.innerHeight;
+    setMenuPos({
+      top: fitsBelow ? rect.bottom + 4 : rect.top - menuHeight - 4,
+      left: Math.max(8, rect.right - menuWidth),
+    });
+  }, [openMenu]);
+
+  // Close the menu on outside click and on Escape.
+  useEffect(() => {
+    if (!openMenu) return;
+    const onDown = (e: MouseEvent) => {
+      const btn = menuBtnRefs.current[openMenu];
+      if (btn && btn.contains(e.target as Node)) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('[data-folder-menu="true"]')) return;
+      setOpenMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenMenu(null);
+    };
+    document.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [openMenu]);
+
+  // Auto-focus the pattern input when it opens.
+  useEffect(() => {
+    if (addingPattern) {
+      patternInputRef.current?.focus();
+    }
+  }, [addingPattern]);
 
   const handleAddFolder = async () => {
     if (pickingFolder) return;
@@ -82,10 +133,14 @@ export function FoldersTab() {
 
   const handleAddPattern = async () => {
     const trimmed = newPattern.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setAddingPattern(false);
+      return;
+    }
     try {
       await AddIgnoredFolder(trimmed);
       setNewPattern('');
+      setAddingPattern(false);
       await loadIgnoredPatterns();
     } catch (err) {
       console.error('Failed to add pattern:', err);
@@ -147,25 +202,14 @@ export function FoldersTab() {
                 }} />
                 {reindexingFolder === folder ? 'Indexing' : 'Up to date'}
               </span>
-              <div style={{ position: 'relative' }}>
-                <button
-                  style={styles.iconBtn}
-                  onClick={() => setOpenMenu(openMenu === folder ? null : folder)}
-                  title="Options"
-                >
-                  <MoreHorizontal size={16} />
-                </button>
-                {openMenu === folder && (
-                  <div style={styles.dropMenu}>
-                    <button style={styles.dropItem} onClick={() => handleReindex(folder)}>
-                      <RotateCcw size={13} style={{ marginRight: 6 }} /> Rescan
-                    </button>
-                    <button style={{ ...styles.dropItem, color: '#e53935' }} onClick={() => { setConfirm({ path: folder }); setOpenMenu(null); }}>
-                      <X size={13} style={{ marginRight: 6 }} /> Remove
-                    </button>
-                  </div>
-                )}
-              </div>
+              <button
+                ref={(el) => { menuBtnRefs.current[folder] = el; }}
+                style={styles.iconBtn}
+                onClick={() => setOpenMenu(openMenu === folder ? null : folder)}
+                title="Options"
+              >
+                <MoreHorizontal size={16} />
+              </button>
             </div>
           ))}
         </div>
@@ -201,8 +245,9 @@ export function FoldersTab() {
               </button>
             </span>
           ))}
-          <div style={styles.addPatternRow}>
+          {addingPattern ? (
             <input
+              ref={patternInputRef}
               style={{
                 ...styles.patternInput,
                 borderColor: patternFocused ? 'var(--border-focus)' : 'var(--border)',
@@ -212,20 +257,55 @@ export function FoldersTab() {
               value={newPattern}
               onChange={(e) => setNewPattern(e.target.value)}
               onFocus={() => setPatternFocused(true)}
-              onBlur={() => setPatternFocused(false)}
+              onBlur={() => {
+                setPatternFocused(false);
+                if (!newPattern.trim()) setAddingPattern(false);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
                   handleAddPattern();
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setNewPattern('');
+                  setAddingPattern(false);
                 }
               }}
             />
-            {newPattern.trim() && (
-              <button style={styles.addPatternBtn} onClick={handleAddPattern}>Add</button>
-            )}
-          </div>
+          ) : (
+            <button
+              style={styles.addPatternChip}
+              onClick={() => setAddingPattern(true)}
+              title="Add an excluded pattern"
+            >
+              <Plus size={12} />
+              Add pattern
+            </button>
+          )}
         </div>
       </div>
+
+      {openMenu && menuPos && (
+        <div
+          data-folder-menu="true"
+          style={{
+            ...styles.dropMenu,
+            position: 'fixed',
+            top: menuPos.top,
+            left: menuPos.left,
+          }}
+        >
+          <button style={styles.dropItem} onClick={() => handleReindex(openMenu)}>
+            <RotateCcw size={13} style={{ marginRight: 6 }} /> Rescan
+          </button>
+          <button
+            style={{ ...styles.dropItem, color: '#e53935' }}
+            onClick={() => { setConfirm({ path: openMenu }); setOpenMenu(null); }}
+          >
+            <X size={13} style={{ marginRight: 6 }} /> Remove
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -319,15 +399,12 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
   },
   dropMenu: {
-    position: 'absolute',
-    right: 0,
-    top: '100%',
     background: 'var(--bg-surface-opaque-2)',
     border: '1px solid var(--border)',
     borderRadius: 'var(--radius-md, 8px)',
     boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-    zIndex: 100,
-    minWidth: 140,
+    zIndex: 2000,
+    width: 150,
     padding: '4px 0',
   },
   dropItem: {
@@ -415,11 +492,6 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
   },
-  addPatternRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-  },
   patternInput: {
     background: 'var(--bg-surface-opaque-2)',
     border: '1px solid var(--border)',
@@ -430,17 +502,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     outline: 'none',
     cursor: 'text',
-    width: 140,
+    width: 180,
   },
-  addPatternBtn: {
-    background: 'var(--accent, #7c6fe0)',
-    border: 'none',
+  addPatternChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    background: 'transparent',
+    border: '1px dashed var(--border)',
     borderRadius: 'var(--radius-sm, 4px)',
-    color: '#fff',
+    color: 'var(--text-secondary)',
     fontSize: 12,
-    padding: '5px 12px',
+    padding: '5px 10px',
     cursor: 'pointer',
     fontFamily: 'var(--font-sans)',
-    fontWeight: 500,
   },
 };

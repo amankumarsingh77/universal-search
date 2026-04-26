@@ -12,6 +12,10 @@ import ReindexBanner from './components/ReindexBanner';
 import ErrorBanner from './components/ErrorBanner';
 import WarningChip from './components/WarningChip';
 import { OnboardingOverlay } from './components/OnboardingOverlay';
+import { SettingsButton } from './components/SettingsButton';
+import { SettingsPopover } from './components/SettingsPopover';
+import { SettingsPanel } from './components/SettingsPanel';
+import type { SettingsTab } from './components/SettingsPanel';
 import { useSearch } from './hooks/useSearch';
 import { useIndexingStatus } from './hooks/useIndexingStatus';
 import { useHideSuppression } from './hooks/useHideSuppression';
@@ -60,6 +64,11 @@ function App() {
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  // Settings panel state
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('folders');
+  const [showSettingsPopover, setShowSettingsPopover] = useState(false);
+
   useEffect(() => {
     GetFolders().then(folders => setHasFolders(folders.length > 0));
     GetHasGeminiKey().then(setHasApiKey).catch(() => setHasApiKey(false));
@@ -68,7 +77,9 @@ function App() {
 
   useEffect(() => {
     const _cancel = EventsOn('open-folder-manager', () => {
-      setShowFolderManager(true);
+      setSettingsTab('folders');
+      setShowSettings(true);
+      setShowSettingsPopover(false);
     });
     return () => {
       EventsOff('open-folder-manager');
@@ -77,7 +88,9 @@ function App() {
 
   useEffect(() => {
     const _cancel = EventsOn('open-api-key-dialog', () => {
-      setShowApiKeyDialog(true);
+      setSettingsTab('api-key');
+      setShowSettings(true);
+      setShowSettingsPopover(false);
     });
     return () => {
       EventsOff('open-api-key-dialog');
@@ -172,13 +185,22 @@ function App() {
     // open. The dialog steals focus, fires blur on the Wails window, and then
     // the modal sheet gets dismissed along with its now-hidden parent —
     // exactly the bug users reported with "Add folder".
+    // Also skip if settings panel or popover is open.
     const handleBlur = () => {
       if (isSuppressed()) return;
+      const w = window as unknown as Record<string, unknown>;
+      if (w.__settingsPopoverOpen || w.__settingsPanelOpen) return;
       HideWindow();
     };
     window.addEventListener('blur', handleBlur);
     return () => window.removeEventListener('blur', handleBlur);
   }, [isSuppressed]);
+
+  const openSettingsTab = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    setShowSettings(true);
+    setShowSettingsPopover(false);
+  };
 
   return (
     <div style={styles.root}>
@@ -196,6 +218,14 @@ function App() {
             ? <WarningChip key={warning} label="Query understanding was slow" />
             : undefined
         }
+        rightSlot={
+          <SettingsButton onClick={() => setShowSettingsPopover((v) => !v)} />
+        }
+      />
+      <SettingsPopover
+        open={showSettingsPopover}
+        onClose={() => setShowSettingsPopover(false)}
+        onOpenSettings={openSettingsTab}
       />
       {errorCode === 'ERR_MODEL_MISMATCH' ? (
         <ReindexBanner errorCode={errorCode} />
@@ -264,6 +294,14 @@ function App() {
       {!onboarded && (
         <OnboardingOverlay onDismiss={() => { MarkOnboarded(); setOnboarded(true); }} />
       )}
+      <SettingsPanel
+        open={showSettings}
+        activeTab={settingsTab}
+        onTabChange={setSettingsTab}
+        onClose={() => setShowSettings(false)}
+        onSuccess={(msg) => setToast({ message: msg, type: 'success' })}
+        onError={(msg) => setToast({ message: msg, type: 'error' })}
+      />
     </div>
   );
 }

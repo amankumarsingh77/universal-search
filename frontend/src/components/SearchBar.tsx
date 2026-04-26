@@ -13,6 +13,7 @@ interface SearchBarProps {
   banner?: string | null;
   onForceParseQuery?: () => void;
   warningChip?: React.ReactNode;
+  rightSlot?: React.ReactNode;
 }
 
 export function SearchBar({
@@ -25,6 +26,7 @@ export function SearchBar({
   banner,
   onForceParseQuery,
   warningChip,
+  rightSlot,
 }: SearchBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const hasFilenamePrefix = query.toLowerCase().startsWith('f:');
@@ -82,6 +84,7 @@ export function SearchBar({
             </svg>
           </button>
         )}
+        {rightSlot}
       </div>
       {(chips.length > 0 || warningChip || hasFilenamePrefix) && (
         <div style={styles.chipRow}>

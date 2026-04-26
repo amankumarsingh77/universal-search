@@ -56,18 +56,12 @@ func (t *TrayManager) onReady() {
 	systray.SetOnClick(func(systray.IMenu) { t.app.ToggleWindow() })
 
 	showHide := systray.AddMenuItem("Show/Hide", "Toggle search window")
-	systray.AddSeparator()
 	reindex := systray.AddMenuItem("Re-index Now", "Re-index all folders")
-	folders := systray.AddMenuItem("Manage Folders...", "Add or remove indexed folders")
 	systray.AddSeparator()
 	quit := systray.AddMenuItem("Quit", "Quit Findo")
 
 	showHide.Click(func() { t.app.ToggleWindow() })
 	reindex.Click(func() { t.app.ReindexNow() })
-	folders.Click(func() {
-		t.app.ShowWindow()
-		t.app.EmitEvent("open-folder-manager")
-	})
 	quit.Click(func() { t.app.Quit() })
 }
 

@@ -127,28 +127,6 @@ func main() {
 		a.Quit()
 	})
 
-	// "Indexing" menu
-	indexingMenu := appMenu.AddSubmenu("Indexing")
-	indexingMenu.AddText("Re-index Now", keys.CmdOrCtrl("r"), func(_ *menu.CallbackData) {
-		a.ReindexNow()
-	})
-	indexingMenu.AddText("Pause Indexing", nil, func(_ *menu.CallbackData) {
-		a.PauseIndexing()
-	})
-	indexingMenu.AddText("Resume Indexing", nil, func(_ *menu.CallbackData) {
-		a.ResumeIndexing()
-	})
-
-	// "Settings" menu
-	settingsMenu := appMenu.AddSubmenu("Settings")
-	settingsMenu.AddText("Manage Folders...", keys.CmdOrCtrl("o"), func(cd *menu.CallbackData) {
-		a.EmitEvent("open-folder-manager")
-	})
-	settingsMenu.AddText("Set API Key…", nil, func(_ *menu.CallbackData) {
-		a.ShowWindow()
-		a.EmitEvent("open-api-key-dialog")
-	})
-
 	// Add the native macOS Edit menu so that Cmd+V/C/A/Z work in all input fields.
 	appMenu.Append(menu.EditMenu())
 

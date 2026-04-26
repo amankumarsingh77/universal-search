@@ -40,7 +40,7 @@ var nlKindPatterns = map[string]string{
 // temporalPatternsSorted lists temporal patterns in descending length order
 // for longest-match-first scanning. "before", "after", and "since" are
 // intentionally absent — they only make sense paired with a following date,
-// which is handled by tryDirectionalDateAfterKind, not as standalone phrases.
+// which is handled by tryTemporalAfterKind, not as standalone phrases.
 var temporalPatternsSorted = []string{
 	"last month", "this month", "next month",
 	"last week", "this week", "next week",

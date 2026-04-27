@@ -88,6 +88,18 @@ type EmbedderStatsDTO struct {
 	LastEmbedAt   int64  `json:"lastEmbedAt"` // unix seconds; 0 when never
 }
 
+// IndexingSettingsDTO is the JSON-serializable view of editable indexing
+// settings. The *Saved fields reflect what is persisted (and will take effect
+// after restart for fields that are not hot-applied); the *Runtime fields
+// reflect the values currently in use by the running pipeline. The frontend
+// surfaces a "restart required" hint whenever Saved != Runtime for a field.
+type IndexingSettingsDTO struct {
+	WorkersSaved     int `json:"workersSaved"`
+	WorkersRuntime   int `json:"workersRuntime"`
+	RateLimitSaved   int `json:"rateLimitSaved"`
+	RateLimitRuntime int `json:"rateLimitRuntime"`
+}
+
 // IndexStatusDTO is the JSON-serializable indexing status sent to the frontend.
 type IndexStatusDTO struct {
 	TotalFiles        int               `json:"totalFiles"`

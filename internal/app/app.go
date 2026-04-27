@@ -203,6 +203,7 @@ func (a *App) startup(ctx context.Context) {
 		return
 	}
 	a.seedDefaultIgnorePatterns()
+	a.applyPersistedIndexingOverrides()
 
 	go func() {
 		if err := a.store.EvictOldQueryCache(7 * 24 * time.Hour); err != nil {

@@ -86,6 +86,19 @@ func (rl *RateLimiter) PauseUntil(t time.Time) {
 	}
 }
 
+// SetRatePerMinute updates the configured maximum requests per window. Values
+// less than 1 are ignored. Existing in-window tokens are retained, so a
+// reduction takes effect against future Allow calls only — already-admitted
+// requests are not retroactively revoked.
+func (rl *RateLimiter) SetRatePerMinute(maxReqs int) {
+	if maxReqs < 1 {
+		return
+	}
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.maxReqs = maxReqs
+}
+
 // Stats returns the number of tokens used inside the current sliding window
 // alongside the configured max. Used to surface rate-limit headroom in the UI.
 func (rl *RateLimiter) Stats() (used, max int) {

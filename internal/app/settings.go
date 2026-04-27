@@ -161,6 +161,88 @@ func (a *App) SetNLQueryEnabled(enabled bool) error {
 	return nil
 }
 
+// applyPersistedIndexingOverrides mutates a.cfg with values from the settings
+// KV store, when present and valid. Called once during startup before the
+// pipeline and embedder are constructed so the overrides flow into them.
+// Out-of-range or unparseable values are ignored (cfg defaults stand).
+func (a *App) applyPersistedIndexingOverrides() {
+	if v, err := a.store.GetSetting(settingIndexingWorkers, ""); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= indexingWorkersMin && n <= indexingWorkersMax {
+			a.cfg.Indexing.Workers = n
+		}
+	}
+	if v, err := a.store.GetSetting(settingIndexingRateLimit, ""); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= indexingRateLimitMin && n <= indexingRateLimitMax {
+			a.cfg.Embedder.Gemini.RateLimitPerMinute = n
+		}
+	}
+}
+
+// Indexing settings keys persisted in the settings KV table.
+const (
+	settingIndexingWorkers   = "indexing.workers"
+	settingIndexingRateLimit = "indexing.rate_limit_per_minute"
+
+	indexingWorkersMin   = 1
+	indexingWorkersMax   = 32
+	indexingRateLimitMin = 1
+	indexingRateLimitMax = 10000
+)
+
+// GetIndexingSettings returns the current saved and runtime values for the
+// editable indexing settings. WorkersRuntime reflects the worker count the
+// pipeline was started with (changing it requires an app restart);
+// RateLimitRuntime reflects the limiter's currently configured maximum.
+func (a *App) GetIndexingSettings() IndexingSettingsDTO {
+	workersSaved := a.cfg.Indexing.Workers
+	if v, err := a.store.GetSetting(settingIndexingWorkers, ""); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			workersSaved = n
+		}
+	}
+	rateSaved := a.cfg.Embedder.Gemini.RateLimitPerMinute
+	if v, err := a.store.GetSetting(settingIndexingRateLimit, ""); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			rateSaved = n
+		}
+	}
+
+	rateRuntime := a.cfg.Embedder.Gemini.RateLimitPerMinute
+	if g, ok := a.embedder.(*embedder.GeminiEmbedder); ok && g.Limiter() != nil {
+		_, rateRuntime = g.Limiter().Stats()
+	}
+
+	return IndexingSettingsDTO{
+		WorkersSaved:     workersSaved,
+		WorkersRuntime:   a.cfg.Indexing.Workers,
+		RateLimitSaved:   rateSaved,
+		RateLimitRuntime: rateRuntime,
+	}
+}
+
+// SetIndexingSettings validates and persists the editable indexing settings
+// atomically (neither value is written if either is invalid). The rate limit
+// is hot-applied to the running embedder; the worker count is persisted only
+// and takes effect on next app start.
+func (a *App) SetIndexingSettings(workers, rateLimit int) error {
+	if workers < indexingWorkersMin || workers > indexingWorkersMax {
+		return apperr.New(apperr.ErrConfigInvalid.Code, "workers must be between 1 and 32")
+	}
+	if rateLimit < indexingRateLimitMin || rateLimit > indexingRateLimitMax {
+		return apperr.New(apperr.ErrConfigInvalid.Code, "rate limit must be between 1 and 10000")
+	}
+	if err := a.store.SetSetting(settingIndexingWorkers, strconv.Itoa(workers)); err != nil {
+		return apperr.Wrap(apperr.ErrStoreLocked.Code, "could not save workers", err)
+	}
+	if err := a.store.SetSetting(settingIndexingRateLimit, strconv.Itoa(rateLimit)); err != nil {
+		return apperr.Wrap(apperr.ErrStoreLocked.Code, "could not save rate limit", err)
+	}
+	if g, ok := a.embedder.(*embedder.GeminiEmbedder); ok && g.Limiter() != nil {
+		g.Limiter().SetRatePerMinute(rateLimit)
+	}
+	return nil
+}
+
 // getBruteForceThreshold returns the configured brute_force_threshold setting,
 // falling back to DefaultBruteForceThreshold if unset or invalid.
 func (a *App) getBruteForceThreshold() int {

@@ -144,6 +144,24 @@ export namespace app {
 		    return a;
 		}
 	}
+	export class IndexingSettingsDTO {
+	    workersSaved: number;
+	    workersRuntime: number;
+	    rateLimitSaved: number;
+	    rateLimitRuntime: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new IndexingSettingsDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.workersSaved = source["workersSaved"];
+	        this.workersRuntime = source["workersRuntime"];
+	        this.rateLimitSaved = source["rateLimitSaved"];
+	        this.rateLimitRuntime = source["rateLimitRuntime"];
+	    }
+	}
 	export class ParseQueryResult {
 	    chips: ChipDTO[];
 	    semanticQuery: string;

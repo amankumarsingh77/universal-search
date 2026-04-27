@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"time"
 	"unicode/utf8"
@@ -55,22 +54,22 @@ func (a *App) GetFilePreview(path string) (string, error) {
 	const maxBytes = 8192
 	f, err := os.Open(path)
 	if err != nil {
-		return "", fmt.Errorf("open: %w", err)
+		return "", apperr.Wrap(apperr.ErrFilePreview.Code, "open: "+err.Error(), err)
 	}
 	defer f.Close()
 	buf := make([]byte, maxBytes)
 	n, _ := f.Read(buf)
 	if n == 0 {
-		return "", fmt.Errorf("empty file")
+		return "", apperr.New(apperr.ErrFilePreview.Code, "empty file")
 	}
 	buf = buf[:n]
 	for _, b := range buf {
 		if b == 0 {
-			return "", fmt.Errorf("binary file")
+			return "", apperr.New(apperr.ErrFilePreview.Code, "binary file")
 		}
 	}
 	if !utf8.Valid(buf) {
-		return "", fmt.Errorf("invalid UTF-8")
+		return "", apperr.New(apperr.ErrFilePreview.Code, "invalid UTF-8")
 	}
 	return string(buf), nil
 }

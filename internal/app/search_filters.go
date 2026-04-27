@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path/filepath"
 	"time"
 
@@ -190,7 +189,7 @@ func (a *App) searchFilenameOnly(queryText string) (SearchWithFiltersResult, err
 // snapshotted instance, avoiding races with concurrent SetGeminiAPIKey.
 func (a *App) getQueryVector(emb embedder.Embedder, queryText string) ([]float32, error) {
 	if emb == nil {
-		return nil, fmt.Errorf("embedder not initialized — set GEMINI_API_KEY")
+		return nil, apperr.New(apperr.ErrEmbedNotConfig.Code, "embedder not initialized — set GEMINI_API_KEY")
 	}
 
 	if a.store != nil {

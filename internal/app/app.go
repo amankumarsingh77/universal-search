@@ -208,14 +208,15 @@ func (a *App) startup(ctx context.Context) {
 	a.seedDefaultIgnorePatterns()
 	a.applyPersistedIndexingOverrides()
 
-	go func() {
+	a.group.Go(func() error {
 		if err := a.store.EvictOldQueryCache(7 * 24 * time.Hour); err != nil {
 			log.Warn("query cache eviction failed", "error", err)
 		}
 		if err := a.store.EvictOldParsedQueryCache(); err != nil {
 			log.Warn("failed to evict old parsed query cache", "error", err)
 		}
-	}()
+		return nil
+	})
 
 	indexPath, err := platform.IndexPath()
 	if err != nil {

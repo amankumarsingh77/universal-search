@@ -65,6 +65,13 @@ var (
 	ErrClassifierFailed     = &Error{Code: "ERR_CLASSIFIER_FAILED", Message: "query classification failed"}
 )
 
+// File-preview and media-processing error codes.
+var (
+	ErrFilePreview     = &Error{Code: "ERR_FILE_PREVIEW", Message: "file preview not available"}
+	ErrMediaProcessing = &Error{Code: "ERR_MEDIA_PROCESSING", Message: "media processing failed"}
+	ErrEmbedNotConfig  = &Error{Code: "ERR_EMBED_NOT_CONFIGURED", Message: "embedder not configured"}
+)
+
 // Indexing-failure error codes (REQ-001).
 var (
 	ErrUnsupportedFormat  = &Error{Code: "ERR_UNSUPPORTED_FORMAT", Message: "file format is not supported for indexing"}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	goruntime "runtime"
 
+	"findo/internal/apperr"
 	"findo/internal/indexer"
 	"findo/internal/platform"
 
@@ -56,7 +57,7 @@ func (a *App) GetPreviewClipPath(videoPath string, timestamp float64) (string, e
 	}
 
 	if err := indexer.ExtractPreviewClip(videoPath, clipPath, timestamp, 15); err != nil {
-		return "", fmt.Errorf("ffmpeg preview clip failed: %w", err)
+		return "", apperr.Wrap(apperr.ErrMediaProcessing.Code, "ffmpeg preview clip failed", err)
 	}
 	return clipPath, nil
 }

@@ -13,6 +13,9 @@ export const CODE_LABELS: Record<string, string> = {
   ERR_QUERY_RATE_LIMITED: "Rate limited",
   ERR_FILENAME_SEARCH_FAILED: "Filename search failed",
   ERR_CLASSIFIER_FAILED: "Query classification failed",
+  ERR_FILE_PREVIEW: "Preview unavailable",
+  ERR_MEDIA_PROCESSING: "Media processing failed",
+  ERR_EMBED_NOT_CONFIGURED: "Embedder not configured",
 };
 
 export const CODE_DESCRIPTIONS: Record<string, string> = {

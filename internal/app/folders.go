@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +19,7 @@ import (
 // parent window when focus leaves.
 func (a *App) PickAndAddFolder() (string, error) {
 	if a.ctx == nil {
-		return "", fmt.Errorf("app context not initialized")
+		return "", apperr.New(apperr.ErrInternal.Code, "app context not initialized")
 	}
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select folder to index",

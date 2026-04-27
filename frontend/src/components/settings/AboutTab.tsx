@@ -1,4 +1,4 @@
-import { ExternalLink } from 'lucide-react';
+import { ExternalLink, Flag } from 'lucide-react';
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
 
 export function AboutTab() {
@@ -21,17 +21,17 @@ export function AboutTab() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         <button
           style={styles.linkBtn}
-          onClick={() => BrowserOpenURL('https://aistudio.google.com/apikey')}
-        >
-          <ExternalLink size={15} />
-          Get a Gemini API Key
-        </button>
-        <button
-          style={styles.linkBtn}
-          onClick={() => BrowserOpenURL('https://github.com')}
+          onClick={() => BrowserOpenURL('https://github.com/amankumarsingh77/findo')}
         >
           <ExternalLink size={15} />
           View on GitHub
+        </button>
+        <button
+          style={styles.linkBtn}
+          onClick={() => BrowserOpenURL('https://github.com/amankumarsingh77/findo/issues')}
+        >
+          <Flag size={15} />
+          Report an issue
         </button>
       </div>
 

@@ -29,6 +29,8 @@ export function GetIndexFailures():Promise<Array<app.IndexFailureDTO>>;
 
 export function GetIndexStatus():Promise<app.IndexStatusDTO>;
 
+export function GetIndexingSettings():Promise<app.IndexingSettingsDTO>;
+
 export function GetNLQueryEnabled():Promise<boolean>;
 
 export function GetOnboarded():Promise<boolean>;
@@ -74,6 +76,8 @@ export function SearchWithFilters(arg1:string,arg2:string,arg3:Array<string>):Pr
 export function SetBaseContext(arg1:context.Context):Promise<void>;
 
 export function SetGeminiAPIKey(arg1:string):Promise<void>;
+
+export function SetIndexingSettings(arg1:number,arg2:number):Promise<void>;
 
 export function SetNLQueryEnabled(arg1:boolean):Promise<void>;
 

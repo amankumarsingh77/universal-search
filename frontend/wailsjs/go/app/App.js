@@ -54,6 +54,10 @@ export function GetIndexStatus() {
   return window['go']['app']['App']['GetIndexStatus']();
 }
 
+export function GetIndexingSettings() {
+  return window['go']['app']['App']['GetIndexingSettings']();
+}
+
 export function GetNLQueryEnabled() {
   return window['go']['app']['App']['GetNLQueryEnabled']();
 }
@@ -144,6 +148,10 @@ export function SetBaseContext(arg1) {
 
 export function SetGeminiAPIKey(arg1) {
   return window['go']['app']['App']['SetGeminiAPIKey'](arg1);
+}
+
+export function SetIndexingSettings(arg1, arg2) {
+  return window['go']['app']['App']['SetIndexingSettings'](arg1, arg2);
 }
 
 export function SetNLQueryEnabled(arg1) {

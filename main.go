@@ -49,29 +49,51 @@ func (h *localFileHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.isAllowedPath(filePath) {
+	// Resolve symlinks so an attacker can't smuggle a link inside an allowed
+	// folder that points outside it.
+	resolved, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	if !h.isAllowedPath(resolved) {
 		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
 
 	// Set content type from extension
-	ext := filepath.Ext(filePath)
+	ext := filepath.Ext(resolved)
 	if ct := mime.TypeByExtension(ext); ct != "" {
 		w.Header().Set("Content-Type", ct)
 	}
 
-	http.ServeFile(w, r, filePath)
+	http.ServeFile(w, r, resolved)
 }
 
 // isAllowedPath checks if the requested path falls within the thumbnail
 // directory or one of the user's indexed folders.
 func (h *localFileHandler) isAllowedPath(filePath string) bool {
 	thumbDir, err := platform.ThumbnailDir()
-	if err == nil && strings.HasPrefix(filePath, thumbDir) {
+	if err == nil && pathContains(thumbDir, filePath) {
 		return true
 	}
 
 	return app.FolderAllowed(h.app, filePath)
+}
+
+// pathContains reports whether filePath lies within base. Uses filepath.Rel so
+// "/foo/bar-secret" is not treated as inside "/foo/bar" the way a naive
+// HasPrefix check would.
+func pathContains(base, filePath string) bool {
+	rel, err := filepath.Rel(base, filePath)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
 
 //go:embed all:frontend/dist

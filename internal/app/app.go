@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -129,11 +130,25 @@ func FolderAllowed(a *App, filePath string) bool {
 		return false
 	}
 	for _, folder := range folders {
-		if strings.HasPrefix(filePath, folder) {
+		if pathContains(folder, filePath) {
 			return true
 		}
 	}
 	return false
+}
+
+// pathContains reports whether filePath is the same as base or lies inside it.
+// Uses filepath.Rel so that "/home/user/docs-secret" is not treated as inside
+// "/home/user/docs", which a naive HasPrefix check would allow.
+func pathContains(base, filePath string) bool {
+	rel, err := filepath.Rel(base, filePath)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }
 
 // ShowAboutDialog shows the macOS-native About dialog. Package-level to avoid
